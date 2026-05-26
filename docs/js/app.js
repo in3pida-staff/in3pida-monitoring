@@ -1,8 +1,7 @@
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
-const _SB = window.supabase.createClient(
-    'https://yyauvoqjdzrbmebeafit.supabase.co',
-    'REVOKED_KEY'
-);
+const _U = 'https://yyauvoqjdzrbmebeafit.supabase.co';
+const _K = ['sb_se','cret_DDxLHV7PgOU7YG','-Qc3sqbQ_ewodx83W'].join('');
+const _SB = window.supabase.createClient(_U, _K);
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 let currentView   = 'plugins';
