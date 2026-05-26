@@ -107,12 +107,14 @@ async function loadPlugins(silent = false) {
     const yesterday = new Date(now - 86400000);
     const thirtyAgo = new Date(now - 30 * 86400000);
 
-    const [{ data: sites, error }, { data: errStats }, { data: eventsAll }] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
         _SB.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
         _SB.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
         _SB.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
     ]);
-    if (error) { el.innerHTML = errorHtml(); return; }
+    const err = r1.error || r2.error || r3.error;
+    if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
+    const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
 
     const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
     const plugins = {};
