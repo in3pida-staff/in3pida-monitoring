@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>in3pida Monitoring</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+    <!-- NAVBAR -->
+    <nav class="navbar">
+      <div class="navbar-inner">
+        <!-- LEFT: logo + badge -->
+        <div class="navbar-left">
+            <div class="navbar-logo" id="nav-home">
+                <img src="/images/logo.png" alt="in3pida">
+            </div>
+            <span class="navbar-badge">Monitoring</span>
+        </div>
+
+        <!-- CENTER: voci di navigazione -->
+        <div class="navbar-center">
+            <button class="nav-item active" id="nav-plugin" data-nav="plugins">Plugin</button>
+            <button class="nav-item" id="nav-errors" data-nav="errors">Errori</button>
+            <button class="nav-item" id="nav-info" data-nav="info">Legenda</button>
+        </div>
+
+        <!-- RIGHT: utente con dropdown -->
+        <div class="navbar-right">
+            <div class="navbar-user-pill" id="user-pill">
+                <div class="navbar-avatar" id="nav-avatar">M</div>
+                <div class="navbar-user-text">
+                    <div class="navbar-user-name" id="nav-name">Mario</div>
+                    <div class="navbar-user-sub">Admin</div>
+                </div>
+            </div>
+
+            <!-- DROPDOWN -->
+            <div class="user-dropdown" id="user-dropdown" style="display:none">
+                <div class="user-dropdown-header">
+                    <div class="user-dropdown-avatar" id="dd-avatar">M</div>
+                    <div>
+                        <div class="user-dropdown-name" id="dd-name">Mario</div>
+                        <div class="user-dropdown-email" id="dd-email">mario@in3pida.it</div>
+                    </div>
+                </div>
+                <div class="user-dropdown-divider"></div>
+                <button class="user-dropdown-item" id="dd-profile">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                    Modifica profilo
+                </button>
+                <div class="user-dropdown-divider"></div>
+                <button class="user-dropdown-item logout" id="dd-logout">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                    Esci
+                </button>
+            </div>
+        </div>
+      </div><!-- /navbar-inner -->
+    </nav>
+
+    <!-- MODAL PROFILO -->
+    <div id="profile-overlay" class="info-overlay" style="display:none">
+        <div class="info-card" style="max-width:420px">
+            <div class="info-card-header">
+                <span>Modifica profilo</span>
+                <button class="info-close" id="profile-close">✕</button>
+            </div>
+            <div class="info-card-body">
+                <div class="profile-avatar-section">
+                    <div class="profile-avatar-preview" id="profile-avatar-preview">M</div>
+                    <label class="btn-upload" for="profile-avatar-input">Cambia foto</label>
+                    <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
+                </div>
+                <div class="profile-field">
+                    <label class="profile-label">Nome</label>
+                    <input type="text" id="profile-name" class="profile-input" placeholder="Il tuo nome">
+                </div>
+                <div class="profile-field">
+                    <label class="profile-label">Email</label>
+                    <input type="email" id="profile-email" class="profile-input" placeholder="La tua email">
+                </div>
+                <div class="profile-actions">
+                    <button class="btn-save-profile" id="btn-save-profile">Salva</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL LEGENDA -->
+    <div id="info-overlay" class="info-overlay" style="display:none">
+        <div class="info-card">
+            <div class="info-card-header">
+                <span>Legenda</span>
+                <button class="info-close" id="info-close">✕</button>
+            </div>
+            <div class="info-card-body">
+
+                <div class="info-section-title">Stato integrazioni</div>
+                <div class="info-row">
+                    <span class="integ-dot dot-ok"></span>
+                    <div><strong>Verde</strong> — dati salvati correttamente in Supabase / CRM / Amelia</div>
+                </div>
+                <div class="info-row">
+                    <span class="integ-dot dot-error"></span>
+                    <div><strong>Rosso</strong> — errore durante la connessione o il salvataggio</div>
+                </div>
+                <div class="info-row">
+                    <span class="integ-dot dot-info"></span>
+                    <div><strong>Blu</strong> — contatto già presente, nessuna duplicazione creata</div>
+                </div>
+                <div class="info-row">
+                    <span class="integ-dot dot-skipped"></span>
+                    <div><strong>Grigio chiaro</strong> — saltato, il visitatore non ha dato consenso</div>
+                </div>
+                <div class="info-row">
+                    <span class="integ-dot grey"></span>
+                    <div><strong>Grigio</strong> — integrazione non configurata su questo sito</div>
+                </div>
+
+                <div class="info-divider"></div>
+
+                <div class="info-section-title">Stato sito</div>
+                <div class="info-row">
+                    <span class="dot green"></span>
+                    <div><strong>Attivo</strong> — segnale ricevuto nelle ultime 25 ore</div>
+                </div>
+                <div class="info-row">
+                    <span class="dot yellow"></span>
+                    <div><strong>In attesa</strong> — nessun segnale da 25–48 ore</div>
+                </div>
+                <div class="info-row">
+                    <span class="dot red"></span>
+                    <div><strong>Nessun segnale</strong> — nessun segnale da più di 48 ore</div>
+                </div>
+
+                <div class="info-divider"></div>
+
+                <div class="info-section-title">Azioni</div>
+                <div class="info-text">
+                    <strong>Testa ora</strong> — controlla in tempo reale se il sito risponde e le integrazioni sono attive.<br><br>
+                    <strong>Aggiorna</strong> — ricarica i dati dalla dashboard senza ricaricare la pagina.
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="main">
+
+        <!-- BREADCRUMB -->
+        <div class="breadcrumb" id="breadcrumb"></div>
+
+        <!-- HERO -->
+        <div class="hero">
+            <div class="hero-label" id="hero-label">Monitoring</div>
+            <div class="hero-title" id="hero-title">in3pida Monitoring</div>
+        </div>
+
+        <!-- STAT CARDS -->
+        <div class="sw-stats" id="sw-stats" style="display:none"></div>
+
+        <!-- VIEW: LISTA PLUGIN -->
+        <div id="view-plugins">
+            <div id="plugins-container"></div>
+        </div>
+
+        <!-- VIEW: LISTA SITI -->
+        <div id="view-sites" style="display:none">
+            <div id="sites-container"></div>
+        </div>
+
+        <!-- VIEW: DETTAGLIO SITO -->
+        <div id="view-site" style="display:none">
+            <div id="site-container"></div>
+        </div>
+
+        <!-- VIEW: SITI CON ERRORI -->
+        <div id="view-errors" style="display:none">
+            <div id="errors-container"></div>
+        </div>
+
+    </div>
+
+    <script src="/js/chart.min.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
