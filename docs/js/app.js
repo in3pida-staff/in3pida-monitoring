@@ -1,7 +1,8 @@
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
-const _U = 'https://yyauvoqjdzrbmebeafit.supabase.co';
-const _K = ['sb_se','cret_DDxLHV7PgOU7YG','-Qc3sqbQ_ewodx83W'].join('');
-const _SB = window.supabase.createClient(_U, _K);
+const _SB = window.supabase.createClient(
+    'https://yyauvoqjdzrbmebeafit.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w'
+);
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 let currentView   = 'plugins';
