@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>in3pida Monitoring — Accedi</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="login-page">
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="images/logo.png" alt="in3pida">
+            </div>
+            <div class="login-title">Monitoring Dashboard</div>
+            <div class="login-sub">Inserisci la password per accedere</div>
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input type="password" class="form-input" id="password" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <button class="btn-primary" id="btn-login">Accedi</button>
+            <div class="login-error" id="login-error">Password errata. Riprova.</div>
+        </div>
+    </div>
+    <script>
+        if (sessionStorage.getItem('mon_auth')) window.location.href = 'index.html';
+
+        const HASH = '90d059f70ae862de69212017764401c799840e75cdcc116d2514d16fa3df2158';
+        const btn   = document.getElementById('btn-login');
+        const input = document.getElementById('password');
+        const error = document.getElementById('login-error');
+
+        async function sha256(str) {
+            const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+        }
+
+        async function doLogin() {
+            error.style.display = 'none';
+            if (!input.value) return;
+            btn.textContent = '...'; btn.disabled = true;
+            const h = await sha256(input.value);
+            if (h === HASH) {
+                sessionStorage.setItem('mon_auth', '1');
+                window.location.href = 'index.html';
+            } else {
+                error.style.display = 'block';
+                btn.textContent = 'Accedi'; btn.disabled = false;
+                input.select();
+            }
+        }
+
+        btn.addEventListener('click', doLogin);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    </script>
+</body>
+</html>
