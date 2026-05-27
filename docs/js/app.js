@@ -325,9 +325,10 @@ async function loadSites(pluginName, silent = false) {
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
             for (const btn of outdatedBtns) {
-                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {});
             }
             btnUpdateAll.textContent = 'Tutti aggiornati!';
+            setTimeout(() => loadSites(currentPlugin), 3000);
         });
     }
 
@@ -491,7 +492,7 @@ async function loadSiteDetail(siteId, silent = false) {
 }
 
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
-async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn) {
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess) {
     if (!confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
@@ -507,7 +508,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn) {
             btn.textContent = 'Aggiornato!';
             btn.style.background = 'var(--cyan)';
             btn.style.color = 'white';
-            setTimeout(() => loadSiteDetail(siteId), 3000);
+            setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
         } else {
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
