@@ -313,7 +313,8 @@ async function loadSites(pluginName, silent = false) {
 
 function siteRowHtml(s) {
     const integ = s.last_integ || {};
-    const dotFor = key => { const st = integ[key]; if (st===undefined||st===null||st==='disabled') return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st==='ok') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; if (st==='info') return `<span class="integ-dot dot-info" title="${key}: già presente"></span>`; if (st==='skipped') return `<span class="integ-dot dot-skipped" title="${key}: saltato"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
+    const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
+    const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
     return `<tr data-site-id="${esc(s.site_id)}">
         <td>${dot(s.status)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}${!s.has_crm?'<span class="no-crm-badge">CRM non collegato</span>':''}</div></td>
