@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!sessionStorage.getItem('mon_auth')) { window.location.href = 'login.html'; return; }
 
     loadProfile();
+    loadLatest();
     loadPlugins();
     setInterval(refresh, 60000);
 
@@ -86,6 +87,12 @@ function saveProfile() {
 }
 
 // ─── VERSIONI ─────────────────────────────────────────────────────────────────
+async function loadLatest() {
+    try {
+        const r = await fetch('releases/latest.json?_=' + Date.now());
+        if (r.ok) latestVersions = await r.json();
+    } catch {}
+}
 function updateLatestVersions(sites) {
     (sites || []).forEach(s => {
         if (!s.plugin_version) return;
