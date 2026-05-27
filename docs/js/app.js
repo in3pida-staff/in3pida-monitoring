@@ -393,9 +393,10 @@ async function loadSiteDetail(siteId, silent = false) {
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
         const stats = (intStats||[]).filter(s=>s.integration===integ);
-        if (!stats.length) { integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null}; return; }
+        const configured = !!site['has_' + integ];
+        if (!stats.length) { integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured}; return; }
         const ok = stats.filter(s=>s.status==='ok').length; const rate = ok/stats.length;
-        integrationStatus[integ]={status:rate>=1?'green':rate>=0.8?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null};
+        integrationStatus[integ]={status:rate>=1?'green':rate>=0.8?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
     const hrs = site.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
@@ -429,7 +430,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` :'Nessun dato nelle ultime 24h'}</span></div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? 'Configurata — nessun invio nelle ultime 24h' : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
