@@ -8,14 +8,13 @@ const _SB = window.supabase.createClient(
 let currentView    = 'plugins';
 let currentPlugin  = null;
 let currentSite    = null;
-let latestReleases = {};
+let latestVersions = {}; // calcolato dai dati mon_sites: versione massima per plugin
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     if (!sessionStorage.getItem('mon_auth')) { window.location.href = 'login.html'; return; }
 
     loadProfile();
-    loadReleases();
     loadPlugins();
     setInterval(refresh, 60000);
 
@@ -86,17 +85,28 @@ function saveProfile() {
     document.getElementById('profile-overlay').style.display = 'none';
 }
 
-// ─── RELEASES ─────────────────────────────────────────────────────────────────
-async function loadReleases() {
-    const { data } = await _SB.from('mon_plugin_releases')
-        .select('plugin_name, version, download_url')
-        .order('released_at', { ascending: false });
-    latestReleases = {};
-    (data || []).forEach(r => {
-        if (!latestReleases[r.plugin_name]) {
-            latestReleases[r.plugin_name] = { version: r.version, download_url: r.download_url };
+// ─── VERSIONI ─────────────────────────────────────────────────────────────────
+function updateLatestVersions(sites) {
+    (sites || []).forEach(s => {
+        if (!s.plugin_version) return;
+        if (!latestVersions[s.plugin_name] || semverGt(s.plugin_version, latestVersions[s.plugin_name])) {
+            latestVersions[s.plugin_name] = s.plugin_version;
         }
     });
+}
+function semverGt(a, b) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        if ((pa[i]||0) > (pb[i]||0)) return true;
+        if ((pa[i]||0) < (pb[i]||0)) return false;
+    }
+    return false;
+}
+function latestInfo(pluginName) {
+    const v = latestVersions[pluginName];
+    if (!v) return null;
+    const urls = { 'in3pida-form-2': `https://monitoring.in3pida.it/releases/in3pida-form-2.${v}.zip` };
+    return { version: v, download_url: urls[pluginName] || '' };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -130,6 +140,7 @@ async function loadPlugins(silent = false) {
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
     const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
+    updateLatestVersions(sites);
 
     const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
     const plugins = {};
@@ -258,6 +269,7 @@ async function loadSites(pluginName, silent = false) {
 
     const yesterday = new Date(Date.now() - 86400000);
     const { data: sites } = await _SB.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
+    updateLatestVersions(sites);
     const siteIds = (sites||[]).map(s => s.site_id);
 
     let lastEvents = [], recentStats = [];
@@ -330,11 +342,11 @@ function siteRowHtml(s) {
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}${!s.has_crm?'<span class="no-crm-badge">CRM non collegato</span>':''}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
+        <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
         <td style="display:flex;gap:6px;align-items:center">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestReleases[s.plugin_name];const outdated=lr&&s.plugin_version&&s.plugin_version!==lr.version;return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </td>
     </tr>`;
 }
@@ -384,10 +396,10 @@ async function loadSiteDetail(siteId, silent = false) {
     const allStatuses = [heartbeatStatus,...Object.values(integrationStatus).map(i=>i.status)].filter(s=>s!=='grey');
     const overallStatus = allStatuses.includes('red')?'red':allStatuses.includes('yellow')?'yellow':'green';
 
-    const latestInfo      = latestReleases[site.plugin_name] || null;
-    const latestVersion   = latestInfo ? latestInfo.version : null;
-    const latestDownloadUrl = latestInfo ? latestInfo.download_url : null;
-    const versionOk = !latestVersion || site.plugin_version === latestVersion;
+    const li            = latestInfo(site.plugin_name);
+    const latestVersion = li ? li.version : null;
+    const latestDownloadUrl = li ? li.download_url : null;
+    const versionOk = !latestVersion || !semverGt(latestVersion, site.plugin_version);
 
     const allMessages = (logs||[]).map(l=>l.message||'');
     const suggestions = [];
