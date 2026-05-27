@@ -522,7 +522,12 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             btn.textContent = 'Aggiornato!';
             btn.style.background = 'var(--cyan)';
             btn.style.color = 'white';
-            setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
+            // Pinga il sito dopo 2s: questo carica il nuovo codice PHP e triggera
+            // il heartbeat con la versione corretta. Poi ricarica dopo altri 3s.
+            setTimeout(async () => {
+                try { await pingLive(siteUrl, apiKey); } catch {}
+                setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
+            }, 2000);
         } else {
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
