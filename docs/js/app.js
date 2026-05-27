@@ -112,7 +112,7 @@ function semverGt(a, b) {
 function latestInfo(pluginName) {
     const v = latestVersions[pluginName];
     if (!v) return null;
-    const urls = { 'in3pida-form-2': `https://monitoring.in3pida.it/releases/in3pida-form-${v}.zip` };
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${v}.zip` };
     return { version: v, download_url: urls[pluginName] || '' };
 }
 
