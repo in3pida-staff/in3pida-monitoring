@@ -278,7 +278,7 @@ async function loadSites(pluginName, silent = false) {
     const now = new Date();
     const enriched = (sites||[]).map(s => {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
-        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{}, has_crm: 'crm' in (integMap[s.site_id]||{}), has_amelia: 'amelia' in (integMap[s.site_id]||{}) };
+        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{} };
     });
 
     const active = enriched.filter(s=>s.status==='green').length;
@@ -300,6 +300,10 @@ async function loadSites(pluginName, silent = false) {
     el.querySelectorAll('.btn-update-row').forEach(btn => {
         btn.addEventListener('click', async e => {
             e.stopPropagation();
+            if (btn.dataset.outdated !== '1') {
+                alert('✓ Ultima versione già installata.');
+                return;
+            }
             await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
         });
     });
@@ -330,7 +334,7 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
         <td style="display:flex;gap:6px;align-items:center">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version&&s.api_key?`<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr.download_url)}">Aggiorna</button>`:''})()}
+            ${(()=>{const lr=latestReleases[s.plugin_name];const outdated=lr&&s.plugin_version&&s.plugin_version!==lr.version;return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </td>
     </tr>`;
 }
