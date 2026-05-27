@@ -310,7 +310,7 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span></div>
-            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Ver.</th><th>Installato il</th><th></th></tr></thead>
+            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
