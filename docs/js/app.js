@@ -10,6 +10,17 @@ let currentPlugin  = null;
 let currentSite    = null;
 let latestVersions = {}; // calcolato dai dati mon_sites: versione massima per plugin
 
+// ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
+const normalizeRecord = s => {
+    if (s.status !== 'error' || !s.error_message) return s;
+    const m = s.error_message.toLowerCase();
+    if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
+        return {...s, status:'skipped'};
+    }
+    return s;
+};
+const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     if (!sessionStorage.getItem('mon_auth')) { window.location.href = 'login.html'; return; }
@@ -295,7 +306,7 @@ async function loadSites(pluginName, silent = false) {
     if (siteIds.length > 0) {
         const [le, rs] = await Promise.all([
             _SB.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
-            _SB.from('mon_integration_stats').select('site_id, integration, status, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
+            _SB.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
         ]);
         lastEvents = le.data || [];
         recentStats = rs.data || [];
@@ -304,7 +315,7 @@ async function loadSites(pluginName, silent = false) {
     const lastReqMap = {};
     lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
     const integMap = {};
-    recentStats.forEach(s => { if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration]) integMap[s.site_id][s.integration]=s.status; });
+    recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
 
     const now = new Date();
     const enriched = (sites||[]).map(s => {
@@ -416,17 +427,6 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const trendDays = {};
     for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
-    // Normalizza un record: duplicati Amelia (vecchi record 'error' da prima del fix) → 'skipped'
-    const normalizeRecord = s => {
-        if (s.status !== 'error' || !s.error_message) return s;
-        const m = s.error_message.toLowerCase();
-        if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
-            return {...s, status:'skipped'};
-        }
-        return s;
-    };
-    // Escludi record CRM error senza messaggio (artefatti driver disabilitati)
-    const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
 
     (intTrends||[]).forEach(raw => {
         const s = normalizeRecord(raw);
@@ -476,7 +476,7 @@ async function loadSiteDetail(siteId, silent = false) {
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
     setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
 
-    const integLabels = {supabase:'Supabase (salvataggio dati)',crm:'CRM (invio contatto)',amelia:'Amelia (prenotazione)'};
+    const integLabels = {supabase:'Supabase',crm:'CRM',amelia:'Amelia'};
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
@@ -505,7 +505,7 @@ async function loadSiteDetail(siteId, silent = false) {
             const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
             if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
             const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
-            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.rate===100?'ok':r.rate>=80?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table><div class="heatmap-legend" style="margin-top:14px"><span class="heatmap-cell ok" style="padding:2px 8px">100%</span> Tutto ok<span class="heatmap-cell warn" style="margin-left:14px;padding:2px 8px">80%+</span> Qualche errore<span class="heatmap-cell err" style="margin-left:14px;padding:2px 8px">&lt;80%</span> Molti errori</div></div></div>`;
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.rate===100?'ok':r.rate>=50?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table><div class="heatmap-legend" style="margin-top:14px"><span class="heatmap-cell ok" style="padding:2px 8px">100%</span> Tutto ok<span class="heatmap-cell warn" style="margin-left:14px;padding:2px 8px">50–99%</span> Qualche errore<span class="heatmap-cell err" style="margin-left:14px;padding:2px 8px">&lt;50%</span> Molti errori</div></div></div>`;
         })()}
         <div class="stat-cards-row">
             <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>

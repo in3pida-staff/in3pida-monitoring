@@ -455,9 +455,9 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 .semaforo-detail { font-size: 11px; color: var(--grey); text-align: right; max-width: 240px; }
 
 .info-grid { display: grid; grid-template-columns: 1fr 1fr; }
-.info-row  { padding: 12px 26px; border-bottom: 1px solid #f4f4f8; }
-.info-row:nth-child(odd)  { border-right: 1px solid #f4f4f8; }
-.info-row:last-child, .info-row:nth-last-child(2):nth-child(odd) { border-bottom: none; }
+.info-grid .info-row { display: block; padding: 12px 26px; border-bottom: 1px solid #f4f4f8; border-top: none; }
+.info-grid .info-row:nth-child(odd)  { border-right: 1px solid #f4f4f8; }
+.info-grid .info-row:last-child, .info-grid .info-row:nth-last-child(2):nth-child(odd) { border-bottom: none; }
 .info-label { font-size: 11px; color: var(--grey); margin-bottom: 3px; }
 .info-value { font-weight: 600; font-size: 13px; }
 
