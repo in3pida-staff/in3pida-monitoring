@@ -431,7 +431,6 @@ async function loadSiteDetail(siteId, silent = false) {
     (intTrends||[]).forEach(raw => {
         const s = normalizeRecord(raw);
         const day=s.created_at.slice(0,10);
-        if (!isValidRecord(s, s.integration)) return;
         if(trendDays[day]&&trendDays[day][s.integration]){
             trendDays[day][s.integration].tot++;
             if(s.status==='ok'||s.status==='info'||s.status==='skipped') trendDays[day][s.integration].ok++;
@@ -505,7 +504,7 @@ async function loadSiteDetail(siteId, silent = false) {
             const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
             if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
             const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
-            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.rate===100?'ok':r.rate>=50?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table><div class="heatmap-legend" style="margin-top:14px"><span class="heatmap-cell ok" style="padding:2px 8px">100%</span> Tutto ok<span class="heatmap-cell warn" style="margin-left:14px;padding:2px 8px">50–99%</span> Qualche errore<span class="heatmap-cell err" style="margin-left:14px;padding:2px 8px">&lt;50%</span> Molti errori</div></div></div>`;
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=row.integ==='amelia'?'ok':r.rate===100?'ok':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
         })()}
         <div class="stat-cards-row">
             <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
