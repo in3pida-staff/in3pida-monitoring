@@ -152,7 +152,8 @@ function setActiveNav(id) {
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
     const el = document.getElementById(id); if (el) el.classList.add('active');
 }
-function refresh() {
+async function refresh() {
+    await loadLatest();
     if      (currentView === 'plugins')              loadPlugins(true);
     else if (currentView === 'sites'  && currentPlugin) loadSites(currentPlugin, true);
     else if (currentView === 'site'   && currentSite)   loadSiteDetail(currentSite, true);
