@@ -297,6 +297,12 @@ async function loadSites(pluginName, silent = false) {
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
     el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping')) return; loadSiteDetail(row.dataset.siteId); }); });
+    el.querySelectorAll('.btn-update-row').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
+        });
+    });
     el.querySelectorAll('.btn-ping').forEach(btn => {
         btn.addEventListener('click', async e => {
             e.stopPropagation();
@@ -322,7 +328,10 @@ function siteRowHtml(s) {
         <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
-        <td><button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button></td>
+        <td style="display:flex;gap:6px;align-items:center">
+            <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
+            ${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version&&s.api_key?`<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr.download_url)}">Aggiorna</button>`:''})()}
+        </td>
     </tr>`;
 }
 

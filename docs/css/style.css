@@ -542,6 +542,7 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 }
 .btn-update:hover    { background: var(--magenta2); }
 .btn-update:disabled { opacity: .5; cursor: default; }
+.btn-update-row { font-size: 11px; padding: 5px 12px; margin-left: 0; }
 
 /* ─── BTN DETAIL ─────────────────────────────────────────────────────────── */
 .btn-detail {
