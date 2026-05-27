@@ -21,6 +21,7 @@
         <div class="navbar-center">
             <button class="nav-item active" id="nav-plugin">Plugin</button>
             <button class="nav-item" id="nav-errors">Errori</button>
+            <button class="nav-item" id="nav-users" style="display:none">Utenti</button>
             <button class="nav-item" id="nav-info">Legenda</button>
         </div>
         <div class="navbar-right">
@@ -122,10 +123,39 @@
         <div id="view-sites" style="display:none"><div id="sites-container"></div></div>
         <div id="view-site" style="display:none"><div id="site-container"></div></div>
         <div id="view-errors" style="display:none"><div id="errors-container"></div></div>
+        <div id="view-users" style="display:none"><div id="users-container"></div></div>
+    </div>
+
+    <!-- MODAL MODIFICA UTENTE (admin only) -->
+    <div id="edit-user-overlay" class="info-overlay" style="display:none">
+        <div class="info-card" style="max-width:420px">
+            <div class="info-card-header">
+                <span>Modifica utente</span>
+                <button class="info-close" id="edit-user-close">✕</button>
+            </div>
+            <div class="info-card-body">
+                <input type="hidden" id="edit-user-id">
+                <div class="profile-field">
+                    <label class="profile-label">Nome</label>
+                    <input type="text" id="edit-user-name" class="profile-input" placeholder="Nome completo">
+                </div>
+                <div class="profile-field">
+                    <label class="profile-label">Ruolo</label>
+                    <select id="edit-user-role" class="profile-input">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="profile-actions">
+                    <button class="btn-save-profile" id="btn-save-user">Salva</button>
+                </div>
+                <div id="edit-user-error" style="color:var(--red-text);font-size:13px;margin-top:8px;display:none"></div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
     <script src="js/chart.min.js"></script>
-    <script src="js/app.js?v=2.2.31"></script>
+    <script src="js/app.js?v=2.2.32"></script>
 </body>
 </html>

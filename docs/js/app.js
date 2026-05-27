@@ -8,7 +8,8 @@ const _SB = window.supabase.createClient(
 let currentView    = 'plugins';
 let currentPlugin  = null;
 let currentSite    = null;
-let latestVersions = {}; // calcolato dai dati mon_sites: versione massima per plugin
+let latestVersions = {};
+let currentProfile = null;
 
 // ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
 const normalizeRecord = s => {
@@ -22,10 +23,24 @@ const normalizeRecord = s => {
 const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    if (!sessionStorage.getItem('mon_auth')) { window.location.href = 'login.html'; return; }
+document.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await _SB.auth.getSession();
+    if (!session) { window.location.href = 'login.html'; return; }
 
-    loadProfile();
+    const { data: profile } = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single();
+    if (!profile) {
+        await _SB.auth.signOut();
+        window.location.href = 'login.html?error=unauthorized';
+        return;
+    }
+
+    currentProfile = profile;
+    applyProfile(profile);
+
+    if (profile.role === 'admin') {
+        document.getElementById('nav-users').style.display = '';
+    }
+
     loadLatest();
     loadPlugins();
     setInterval(refresh, 60000);
@@ -33,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('nav-home').addEventListener('click', loadPlugins);
     document.getElementById('nav-plugin').addEventListener('click', loadPlugins);
     document.getElementById('nav-errors').addEventListener('click', loadErrors);
+    document.getElementById('nav-users').addEventListener('click', loadUsers);
     document.getElementById('nav-info').addEventListener('click', () => {
         document.getElementById('info-overlay').style.display = 'flex';
     });
@@ -43,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('click', () => { dropdown.style.display = 'none'; });
     dropdown.addEventListener('click', e => e.stopPropagation());
 
-    document.getElementById('dd-logout').addEventListener('click', () => { sessionStorage.removeItem('mon_auth'); window.location.href = 'login.html'; });
+    document.getElementById('dd-logout').addEventListener('click', async () => { await _SB.auth.signOut(); window.location.href = 'login.html'; });
     document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
     const infoOverlay = document.getElementById('info-overlay');
@@ -58,26 +74,20 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ─── PROFILO ─────────────────────────────────────────────────────────────────
-function readProfile() {
-    try { return JSON.parse(localStorage.getItem('mon_profile')) || {}; } catch { return {}; }
-}
-function loadProfile() { applyProfile(readProfile()); }
 function applyProfile(p) {
-    const name = p.name || 'Mario';
+    const name = p.full_name || p.email || 'Utente';
     document.getElementById('nav-name').textContent = name;
     document.getElementById('dd-name').textContent  = name;
     document.getElementById('dd-email').textContent = p.email || '';
     ['nav-avatar','dd-avatar','profile-avatar-preview'].forEach(id => {
         const el = document.getElementById(id);
-        if (p.avatar) el.innerHTML = `<img src="${p.avatar}" alt="">`;
-        else          el.textContent = name.charAt(0).toUpperCase();
+        if (p.avatar_url) el.innerHTML = `<img src="${esc(p.avatar_url)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
+        else              el.textContent = name.charAt(0).toUpperCase();
     });
 }
 function openProfileModal() {
-    const p = readProfile();
-    document.getElementById('profile-name').value  = p.name  || '';
-    document.getElementById('profile-email').value = p.email || '';
-    applyProfile(p);
+    document.getElementById('profile-name').value  = currentProfile?.full_name  || '';
+    document.getElementById('profile-email').value = currentProfile?.email || '';
     document.getElementById('profile-overlay').style.display = 'flex';
 }
 function uploadAvatar(e) {
@@ -89,23 +99,21 @@ function uploadAvatar(e) {
             const canvas = document.createElement('canvas');
             canvas.width = 80; canvas.height = 80;
             canvas.getContext('2d').drawImage(img, 0, 0, 80, 80);
-            const p = readProfile();
-            p.avatar = canvas.toDataURL('image/jpeg', 0.85);
-            try { localStorage.setItem('mon_profile', JSON.stringify(p)); } catch {}
-            applyProfile(p);
+            const avatar = canvas.toDataURL('image/jpeg', 0.85);
+            currentProfile = { ...currentProfile, avatar_url: avatar };
+            applyProfile(currentProfile);
         };
         img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
 }
-function saveProfile() {
-    const name  = document.getElementById('profile-name').value.trim();
-    const email = document.getElementById('profile-email').value.trim();
-    const p = readProfile();
-    if (name)  p.name  = name;
-    if (email) p.email = email;
-    localStorage.setItem('mon_profile', JSON.stringify(p));
-    applyProfile(p);
+async function saveProfile() {
+    const name = document.getElementById('profile-name').value.trim();
+    if (!currentProfile) return;
+    const updates = { full_name: name || currentProfile.full_name, avatar_url: currentProfile.avatar_url || null };
+    await _SB.from('mon_profiles').update(updates).eq('id', currentProfile.id);
+    currentProfile = { ...currentProfile, ...updates };
+    applyProfile(currentProfile);
     document.getElementById('profile-overlay').style.display = 'none';
 }
 
@@ -662,7 +670,7 @@ function logRowHtml(log) {
 }
 
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
-function showView(view) { ['plugins','sites','site','errors'].forEach(v => document.getElementById(`view-${v}`).style.display = v===view?'':'none'); }
+function showView(view) { ['plugins','sites','site','errors','users'].forEach(v => document.getElementById(`view-${v}`).style.display = v===view?'':'none'); }
 function setHero(label, title, stats) {
     document.getElementById('hero-label').textContent = label;
     document.getElementById('hero-title').textContent = title;
@@ -687,3 +695,115 @@ function esc(str) { if(str===null||str===undefined)return''; return String(str).
 function loadingHtml() { return '<div class="loading"><div class="spinner"></div> Caricamento...</div>'; }
 function errorHtml()   { return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>'; }
 function emptyHtml(title, sub) { return `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`; }
+
+// ─── VISTA UTENTI (admin only) ────────────────────────────────────────────────
+let _usersCache = [];
+
+async function loadUsers() {
+    if (currentProfile?.role !== 'admin') return;
+    currentView = 'users'; showView('users'); setActiveNav('nav-users');
+    setBreadcrumb([{label:'Utenti', active:true}]);
+    setHero('Utenti', 'Gestione accessi');
+
+    const el = document.getElementById('users-container');
+    el.innerHTML = loadingHtml();
+
+    const { data: users, error } = await _SB.from('mon_profiles').select('*').order('created_at', {ascending:false});
+    if (error || !users) { el.innerHTML = errorHtml(); return; }
+    _usersCache = users;
+    renderUsers(users);
+}
+
+function renderUsers(users) {
+    const el = document.getElementById('users-container');
+    el.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">${users.length} account registrati</span>
+                <input type="text" id="user-search" class="search-input" placeholder="🔍 Cerca utente...">
+            </div>
+            <table class="sites-table">
+                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Registrato</th><th>Azioni</th></tr></thead>
+                <tbody>${users.map(userRowHtml).join('')}</tbody>
+            </table>
+        </div>`;
+
+    document.getElementById('user-search').addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('#users-container tbody tr').forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+
+    document.querySelectorAll('.btn-edit-user').forEach(btn => {
+        btn.addEventListener('click', () => openEditUser(btn.dataset.id));
+    });
+    document.querySelectorAll('.btn-delete-user').forEach(btn => {
+        btn.addEventListener('click', () => deleteUser(btn.dataset.id, btn.dataset.name));
+    });
+}
+
+function userRowHtml(u) {
+    const initials = (u.full_name || u.email || '?').charAt(0).toUpperCase();
+    const isSelf   = u.id === currentProfile?.id;
+    const roleCls  = u.role === 'admin' ? 'role-badge-admin' : 'role-badge-user';
+    const roleLabel = u.role === 'admin' ? 'Admin' : 'User';
+    return `<tr>
+        <td>
+            <div style="display:flex;align-items:center;gap:10px">
+                ${u.avatar_url
+                    ? `<img src="${esc(u.avatar_url)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+                    : `<div class="user-initial">${initials}</div>`}
+                <strong>${esc(u.full_name||'—')}</strong>${isSelf?'<span class="user-self-tag">tu</span>':''}
+            </div>
+        </td>
+        <td style="font-size:13px;color:var(--grey)">${esc(u.email)}</td>
+        <td><span class="role-badge ${roleCls}">${roleLabel}</span></td>
+        <td style="font-size:12px;color:var(--grey)">${fmtDate(u.created_at)}</td>
+        <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-ping btn-edit-user" data-id="${esc(u.id)}">✏ Modifica</button>
+            ${!isSelf?`<button class="btn-delete-user" data-id="${esc(u.id)}" data-name="${esc(u.full_name||u.email)}" style="background:none;border:none;color:var(--red-text);font-size:13px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:8px;transition:background .15s" onmouseover="this.style.background='var(--red-bg)'" onmouseout="this.style.background='none'">🗑 Elimina</button>`:''}
+        </td>
+    </tr>`;
+}
+
+function openEditUser(id) {
+    const u = _usersCache.find(x => x.id === id);
+    if (!u) return;
+    document.getElementById('edit-user-id').value     = u.id;
+    document.getElementById('edit-user-name').value   = u.full_name || '';
+    document.getElementById('edit-user-role').value   = u.role;
+    document.getElementById('edit-user-error').style.display = 'none';
+    document.getElementById('edit-user-overlay').style.display = 'flex';
+
+    const saveBtn = document.getElementById('btn-save-user');
+    saveBtn.onclick = async () => {
+        const name = document.getElementById('edit-user-name').value.trim();
+        const role = document.getElementById('edit-user-role').value;
+        saveBtn.textContent = '...'; saveBtn.disabled = true;
+        const { error } = await _SB.from('mon_profiles').update({ full_name: name, role }).eq('id', u.id);
+        saveBtn.textContent = 'Salva'; saveBtn.disabled = false;
+        if (error) {
+            const errEl = document.getElementById('edit-user-error');
+            errEl.textContent = error.message; errEl.style.display = 'block';
+        } else {
+            document.getElementById('edit-user-overlay').style.display = 'none';
+            loadUsers();
+        }
+    };
+
+    document.getElementById('edit-user-close').onclick = () => {
+        document.getElementById('edit-user-overlay').style.display = 'none';
+    };
+    document.getElementById('edit-user-overlay').onclick = e => {
+        if (e.target === document.getElementById('edit-user-overlay'))
+            document.getElementById('edit-user-overlay').style.display = 'none';
+    };
+}
+
+async function deleteUser(id, name) {
+    if (!confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`)) return;
+    const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
+    if (error) { alert('Errore: ' + error.message); return; }
+    loadUsers();
+}
