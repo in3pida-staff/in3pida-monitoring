@@ -299,9 +299,12 @@ async function loadSites(pluginName, silent = false) {
     el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping')) return; loadSiteDetail(row.dataset.siteId); }); });
     el.querySelectorAll('.btn-ping').forEach(btn => {
         btn.addEventListener('click', async e => {
-            e.stopPropagation(); const siteId = btn.dataset.site; const name = btn.dataset.name;
+            e.stopPropagation();
+            const name   = btn.dataset.name;
+            const siteUrl = btn.dataset.url;
+            const apiKey  = btn.dataset.apikey;
             btn.textContent = '...'; btn.disabled = true;
-            try { const d = await pingData(siteId); showPingResult(name, d); }
+            try { const d = await pingLive(siteUrl, apiKey); showPingResult(name, d); }
             catch { showPingResult(name, null); }
             finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
         });
@@ -318,7 +321,7 @@ function siteRowHtml(s) {
         <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
-        <td><button class="btn-ping" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button></td>
+        <td><button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button></td>
     </tr>`;
 }
 
@@ -471,27 +474,46 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn) {
     }
 }
 
-// ─── PING DATA ────────────────────────────────────────────────────────────────
-async function pingData(siteId) {
-    const now = new Date(); const yesterday = new Date(now - 86400000);
-    const [{ data: site }, { data: stats }, { data: lastEvt }] = await Promise.all([
-        _SB.from('mon_sites').select('*').eq('site_id',siteId).single(),
-        _SB.from('mon_integration_stats').select('integration, status, error_message, created_at').eq('site_id',siteId).gte('created_at',yesterday.toISOString()).order('created_at',{ascending:false}),
-        _SB.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').order('created_at',{ascending:false}).limit(1)
-    ]);
-    const hrs = site?.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
-    const integStatus = {}; (stats||[]).forEach(s => { if(!integStatus[s.integration]) integStatus[s.integration]={status:s.status,error:s.error_message}; });
-    const integCounts = {}; (stats||[]).forEach(s => { if(!integCounts[s.integration]) integCounts[s.integration]={ok:0,total:0}; integCounts[s.integration].total++; if(s.status==='ok')integCounts[s.integration].ok++; });
-    return { site_name:site?.site_name, plugin_active:hrs<25, hours_since_heartbeat:Math.round(hrs), last_heartbeat:site?.last_heartbeat, last_request:lastEvt?.[0]?.created_at||null, integ_status:integStatus, integ_counts:integCounts, checked_at:now.toISOString() };
+// ─── PING LIVE ────────────────────────────────────────────────────────────────
+async function pingLive(siteUrl, apiKey) {
+    const now = new Date();
+    if (!siteUrl) throw new Error('URL mancante');
+    const base = siteUrl.replace(/\/$/, '');
+    const endpoint = base + '/wp-json/if2/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const resp = await fetch(endpoint, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!resp.ok) return { reachable: false, status: resp.status, checked_at: now.toISOString() };
+        const json = await resp.json();
+        return { reachable: true, plugin_version: json.plugin_version, wp_version: json.wp_version, php_version: json.php_version, checked_at: now.toISOString() };
+    } catch(e) {
+        clearTimeout(timeout);
+        throw e;
+    }
 }
 
 function showPingResult(name, d) {
     document.getElementById('ping-modal')?.remove();
-    const integLabels = {supabase:'Salvataggio DB',crm:'Invio CRM',amelia:'Amelia'};
-    const rows = d ? Object.entries(d.integ_counts||{}).map(([k,v]) => { const rate=v.total>0?Math.round(v.ok/v.total*100):null; const cls=rate===null?'grey':rate===100?'green':rate>=80?'yellow':'red'; return `<div class="ping-row">${dot(cls)}<span>${integLabels[k]||k}</span><span style="margin-left:auto;font-weight:700">${rate!==null?rate+'%':'—'}</span><span style="font-size:11px;color:var(--grey)">${v.ok}/${v.total} ok nelle ultime 24h</span></div>`; }).join('') : '';
     const modal = document.createElement('div');
     modal.id = 'ping-modal'; modal.className = 'ping-overlay';
-    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div>${!d?`<div style="padding:20px;color:var(--grey)">Errore nel recupero dati.</div>`:`<div class="ping-row" style="border-bottom:1px solid #f4f4f8;padding-bottom:12px;margin-bottom:4px">${dot(d.plugin_active?'green':'red')}<span>Plugin ${d.plugin_active?'attivo':'non risponde'}</span><span style="margin-left:auto;font-size:12px;color:var(--grey)">Ultimo segnale: ${d.last_heartbeat?timeAgo(d.last_heartbeat):'—'}</span></div><div class="ping-row" style="margin-bottom:12px"><span style="font-size:12px;color:var(--grey)">Ultima richiesta ricevuta:</span><span style="margin-left:auto;font-weight:700;font-size:13px">${d.last_request?timeAgo(d.last_request):'Mai'}</span></div>${rows}<div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato ${timeAgo(d.checked_at)}</div>`}</div>`;
+    let body = '';
+    if (!d) {
+        body = `<div style="padding:20px;color:var(--grey)">Sito non raggiungibile o timeout.</div>`;
+    } else if (!d.reachable) {
+        body = `<div class="ping-row">${dot('red')}<span>Sito non risponde</span><span style="margin-left:auto;font-size:12px;color:var(--grey)">HTTP ${d.status||'—'}</span></div><div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    } else {
+        body = `
+        <div class="ping-row" style="border-bottom:1px solid #f4f4f8;padding-bottom:12px;margin-bottom:12px">
+            ${dot('green')}<span style="font-weight:700">Plugin attivo e raggiungibile</span>
+        </div>
+        <div class="ping-row"><span style="color:var(--grey)">Versione plugin</span><span style="margin-left:auto;font-weight:700">${esc(d.plugin_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">WordPress</span><span style="margin-left:auto;font-weight:700">${esc(d.wp_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">PHP</span><span style="margin-left:auto;font-weight:700">${esc(d.php_version||'—')}</span></div>
+        <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    }
+    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div>${body}</div>`;
     document.body.appendChild(modal);
     document.getElementById('ping-close').addEventListener('click', ()=>modal.remove());
     modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
