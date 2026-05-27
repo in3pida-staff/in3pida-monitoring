@@ -72,7 +72,19 @@ function openProfileModal() {
 function uploadAvatar(e) {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { const p = readProfile(); p.avatar = ev.target.result; localStorage.setItem('mon_profile', JSON.stringify(p)); applyProfile(p); };
+    reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 80; canvas.height = 80;
+            canvas.getContext('2d').drawImage(img, 0, 0, 80, 80);
+            const p = readProfile();
+            p.avatar = canvas.toDataURL('image/jpeg', 0.85);
+            try { localStorage.setItem('mon_profile', JSON.stringify(p)); } catch {}
+            applyProfile(p);
+        };
+        img.src = ev.target.result;
+    };
     reader.readAsDataURL(file);
 }
 function saveProfile() {
@@ -409,7 +421,9 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
-        const stats = (intStats||[]).filter(s=>s.integration===integ);
+        let stats = (intStats||[]).filter(s=>s.integration===integ);
+        // Escludi record error senza messaggio (artefatti driver disabilitati da versioni precedenti)
+        if (integ === 'crm') stats = stats.filter(s => s.status !== 'error' || s.error_message);
         const configured = !!site['has_' + integ];
         if (!stats.length) { integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured}; return; }
         const ok = stats.filter(s=>s.status==='ok').length; const rate = ok/stats.length;
