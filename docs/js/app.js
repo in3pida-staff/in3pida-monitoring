@@ -416,17 +416,42 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const trendDays = {};
     for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
-    (intTrends||[]).forEach(s => { const day=s.created_at.slice(0,10); if(trendDays[day]&&trendDays[day][s.integration]){trendDays[day][s.integration].tot++;if(s.status==='ok')trendDays[day][s.integration].ok++;} });
+    // Normalizza un record: duplicati Amelia (vecchi record 'error' da prima del fix) → 'skipped'
+    const normalizeRecord = s => {
+        if (s.status !== 'error' || !s.error_message) return s;
+        const m = s.error_message.toLowerCase();
+        if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
+            return {...s, status:'skipped'};
+        }
+        return s;
+    };
+    // Escludi record CRM error senza messaggio (artefatti driver disabilitati)
+    const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
+
+    (intTrends||[]).forEach(raw => {
+        const s = normalizeRecord(raw);
+        const day=s.created_at.slice(0,10);
+        if (!isValidRecord(s, s.integration)) return;
+        if(trendDays[day]&&trendDays[day][s.integration]){
+            trendDays[day][s.integration].tot++;
+            if(s.status==='ok'||s.status==='info'||s.status==='skipped') trendDays[day][s.integration].ok++;
+        }
+    });
     const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
 
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
-        let stats = (intStats||[]).filter(s=>s.integration===integ);
-        // Escludi record error senza messaggio (artefatti driver disabilitati da versioni precedenti)
-        if (integ === 'crm') stats = stats.filter(s => s.status !== 'error' || s.error_message);
+        let stats = (intStats||[]).filter(s=>s.integration===integ)
+            .filter(s => isValidRecord(s, integ))
+            .map(normalizeRecord);
         const configured = !!site['has_' + integ];
-        if (!stats.length) { integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured}; return; }
-        const ok = stats.filter(s=>s.status==='ok'||s.status==='info'||s.status==='skipped').length; const rate = ok/stats.length;
+        if (!stats.length) {
+            // CRM configurato ma senza invii tracciati (gestito esternamente) → verde
+            integrationStatus[integ]={status:(integ==='crm'&&configured)?'green':'grey',ok:0,total:0,rate:null,last_error:null,configured};
+            return;
+        }
+        const ok = stats.filter(s=>s.status==='ok'||s.status==='info'||s.status==='skipped').length;
+        const rate = ok/stats.length;
         integrationStatus[integ]={status:rate>=1?'green':rate>=0.5?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
@@ -461,7 +486,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? 'Configurata — nessun invio nelle ultime 24h' : 'Non configurata su questo sito'}</span>${k==='crm'&&!v.configured&&site.api_key?`<button class="btn-enable-crm" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}">Abilita CRM esterno</button>`:''}</div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>

@@ -91,11 +91,13 @@
             </div>
             <div class="info-card-body">
                 <div class="info-section-title">Stato integrazioni</div>
-                <div class="info-row"><span class="integ-dot dot-ok"></span><div><strong>Verde</strong> — dati salvati correttamente in Supabase / CRM / Amelia</div></div>
-                <div class="info-row"><span class="integ-dot dot-error"></span><div><strong>Rosso</strong> — errore durante la connessione o il salvataggio</div></div>
-                <div class="info-row"><span class="integ-dot dot-info"></span><div><strong>Blu</strong> — contatto già presente, nessuna duplicazione creata</div></div>
-                <div class="info-row"><span class="integ-dot dot-skipped"></span><div><strong>Grigio chiaro</strong> — saltato, il visitatore non ha dato consenso</div></div>
+                <div class="info-row"><span class="integ-dot dot-ok"></span><div><strong>Verde</strong> — tutto ok: dati inviati correttamente o nessun errore</div></div>
+                <div class="info-row"><span class="integ-dot dot-error"></span><div><strong>Rosso</strong> — meno del 50% ok: errori reali di connessione o server</div></div>
+                <div class="info-row"><span class="integ-dot dot-info"></span><div><strong>Giallo</strong> — tra 50% e 99%: alcuni invii non completati</div></div>
                 <div class="info-row"><span class="integ-dot grey"></span><div><strong>Grigio</strong> — integrazione non configurata su questo sito</div></div>
+                <div class="info-divider"></div>
+                <div class="info-section-title">Note</div>
+                <div class="info-text">I contatti già presenti in Amelia o CRM (<strong>duplicati</strong>) non sono contati come errori — è comportamento normale.</div>
                 <div class="info-divider"></div>
                 <div class="info-section-title">Stato sito</div>
                 <div class="info-row"><span class="dot green"></span><div><strong>Attivo</strong> — segnale ricevuto nelle ultime 25 ore</div></div>
