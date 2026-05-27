@@ -309,13 +309,29 @@ async function loadSites(pluginName, silent = false) {
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span></div>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
-    el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping')) return; loadSiteDetail(row.dataset.siteId); }); });
+
+    const btnUpdateAll = document.getElementById('btn-update-all');
+    if (btnUpdateAll) {
+        btnUpdateAll.addEventListener('click', async () => {
+            const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
+            if (!outdatedBtns.length) return;
+            if (!confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`)) return;
+            btnUpdateAll.textContent = 'Aggiornamento in corso...';
+            btnUpdateAll.disabled = true;
+            for (const btn of outdatedBtns) {
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
+            }
+            btnUpdateAll.textContent = 'Tutti aggiornati!';
+        });
+    }
+
+    el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping') || e.target.closest('.btn-update-row')) return; loadSiteDetail(row.dataset.siteId); }); });
     el.querySelectorAll('.btn-update-row').forEach(btn => {
         btn.addEventListener('click', async e => {
             e.stopPropagation();
