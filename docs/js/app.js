@@ -429,7 +429,9 @@ async function loadSiteDetail(siteId, silent = false) {
     for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
 
     (intTrends||[]).forEach(raw => {
-        const s = normalizeRecord(raw);
+        let s = normalizeRecord(raw);
+        // CRM error senza messaggio = CRM esterno (hotel_id), non è un vero errore
+        if (s.integration === 'crm' && s.status === 'error' && !s.error_message) s = {...s, status:'skipped'};
         const day=s.created_at.slice(0,10);
         if(trendDays[day]&&trendDays[day][s.integration]){
             trendDays[day][s.integration].tot++;
@@ -442,7 +444,8 @@ async function loadSiteDetail(siteId, silent = false) {
     ['supabase','crm','amelia'].forEach(integ => {
         let stats = (intStats||[]).filter(s=>s.integration===integ)
             .filter(s => isValidRecord(s, integ))
-            .map(normalizeRecord);
+            .map(normalizeRecord)
+            .map(s => (integ==='crm' && s.status==='error' && !s.error_message) ? {...s,status:'skipped'} : s);
         const configured = !!site['has_' + integ];
         if (!stats.length) {
             // CRM configurato ma senza invii tracciati (gestito esternamente) → verde
