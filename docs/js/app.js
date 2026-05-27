@@ -435,9 +435,10 @@ async function loadSiteDetail(siteId, silent = false) {
         const day=s.created_at.slice(0,10);
         if(trendDays[day]&&trendDays[day][s.integration]){
             trendDays[day][s.integration].tot++;
-            // Amelia: duplicati (skipped) riducono la %; Supabase/CRM: skipped = ok
+            // Amelia: solo 'ok' conta (info=duplicato, skipped=altro 4xx non entrano nel conteggio)
+            // Supabase/CRM: ok + info + skipped tutti contano
             const isOk = s.integration==='amelia'
-                ? (s.status==='ok'||s.status==='info')
+                ? s.status==='ok'
                 : (s.status==='ok'||s.status==='info'||s.status==='skipped');
             if(isOk) trendDays[day][s.integration].ok++;
         }
@@ -456,7 +457,7 @@ async function loadSiteDetail(siteId, silent = false) {
             integrationStatus[integ]={status:(integ==='crm'&&configured)?'green':'grey',ok:0,total:0,rate:null,last_error:null,configured};
             return;
         }
-        const ok = stats.filter(s => integ==='amelia' ? (s.status==='ok'||s.status==='info') : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
+        const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
         const rate = ok/stats.length;
         // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
         const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
