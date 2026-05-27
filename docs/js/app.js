@@ -435,7 +435,11 @@ async function loadSiteDetail(siteId, silent = false) {
         const day=s.created_at.slice(0,10);
         if(trendDays[day]&&trendDays[day][s.integration]){
             trendDays[day][s.integration].tot++;
-            if(s.status==='ok'||s.status==='info'||s.status==='skipped') trendDays[day][s.integration].ok++;
+            // Amelia: duplicati (skipped) riducono la %; Supabase/CRM: skipped = ok
+            const isOk = s.integration==='amelia'
+                ? (s.status==='ok'||s.status==='info')
+                : (s.status==='ok'||s.status==='info'||s.status==='skipped');
+            if(isOk) trendDays[day][s.integration].ok++;
         }
     });
     const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
@@ -452,9 +456,11 @@ async function loadSiteDetail(siteId, silent = false) {
             integrationStatus[integ]={status:(integ==='crm'&&configured)?'green':'grey',ok:0,total:0,rate:null,last_error:null,configured};
             return;
         }
-        const ok = stats.filter(s=>s.status==='ok'||s.status==='info'||s.status==='skipped').length;
+        const ok = stats.filter(s => integ==='amelia' ? (s.status==='ok'||s.status==='info') : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
         const rate = ok/stats.length;
-        integrationStatus[integ]={status:rate>=1?'green':rate>=0.5?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
+        // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
+        const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
+        integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
     const hrs = site.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
