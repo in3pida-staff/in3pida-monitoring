@@ -426,8 +426,8 @@ async function loadSiteDetail(siteId, silent = false) {
         if (integ === 'crm') stats = stats.filter(s => s.status !== 'error' || s.error_message);
         const configured = !!site['has_' + integ];
         if (!stats.length) { integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured}; return; }
-        const ok = stats.filter(s=>s.status==='ok').length; const rate = ok/stats.length;
-        integrationStatus[integ]={status:rate>=1?'green':rate>=0.8?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
+        const ok = stats.filter(s=>s.status==='ok'||s.status==='info'||s.status==='skipped').length; const rate = ok/stats.length;
+        integrationStatus[integ]={status:rate>=1?'green':rate>=0.5?'yellow':'red',ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
     const hrs = site.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
@@ -461,7 +461,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? 'Configurata — nessun invio nelle ultime 24h' : 'Non configurata su questo sito'}</span></div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? 'Configurata — nessun invio nelle ultime 24h' : 'Non configurata su questo sito'}</span>${k==='crm'&&!v.configured&&site.api_key?`<button class="btn-enable-crm" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}">Abilita CRM esterno</button>`:''}</div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
@@ -500,6 +500,27 @@ async function loadSiteDetail(siteId, silent = false) {
     if (btnDoUpdate) {
         btnDoUpdate.addEventListener('click', () => updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate));
     }
+
+    el.querySelectorAll('.btn-enable-crm').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.textContent = 'Attivazione...'; btn.disabled = true;
+            try {
+                const resp = await fetch(btn.dataset.url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: btn.dataset.apikey, key: 'if2_has_crm_override', value: 1 }),
+                });
+                const json = await resp.json().catch(() => ({}));
+                if (resp.ok && json.success) {
+                    btn.textContent = 'CRM attivato!';
+                    btn.style.background = 'var(--cyan)';
+                    setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
+                } else {
+                    btn.textContent = 'Errore'; btn.disabled = false;
+                }
+            } catch { btn.textContent = 'Errore connessione'; btn.disabled = false; }
+        });
+    });
 
     const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
     if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
