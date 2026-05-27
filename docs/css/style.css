@@ -533,6 +533,16 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 .version-badge.ok   { background: #e0f7f9; color: var(--cyan2); }
 .version-badge.warn { background: #fce8ef; color: var(--magenta); }
 
+/* ─── BTN UPDATE ─────────────────────────────────────────────────────────── */
+.btn-update {
+    background: var(--magenta); border: none; color: white;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    transition: all .15s; white-space: nowrap; margin-left: auto;
+}
+.btn-update:hover    { background: var(--magenta2); }
+.btn-update:disabled { opacity: .5; cursor: default; }
+
 /* ─── BTN DETAIL ─────────────────────────────────────────────────────────── */
 .btn-detail {
     background: var(--light); border: none; color: var(--dark);

@@ -5,15 +5,17 @@ const _SB = window.supabase.createClient(
 );
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
-let currentView   = 'plugins';
-let currentPlugin = null;
-let currentSite   = null;
+let currentView    = 'plugins';
+let currentPlugin  = null;
+let currentSite    = null;
+let latestReleases = {};
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     if (!sessionStorage.getItem('mon_auth')) { window.location.href = 'login.html'; return; }
 
     loadProfile();
+    loadReleases();
     loadPlugins();
     setInterval(refresh, 60000);
 
@@ -82,6 +84,19 @@ function saveProfile() {
     localStorage.setItem('mon_profile', JSON.stringify(p));
     applyProfile(p);
     document.getElementById('profile-overlay').style.display = 'none';
+}
+
+// ─── RELEASES ─────────────────────────────────────────────────────────────────
+async function loadReleases() {
+    const { data } = await _SB.from('mon_plugin_releases')
+        .select('plugin_name, version, download_url')
+        .order('released_at', { ascending: false });
+    latestReleases = {};
+    (data || []).forEach(r => {
+        if (!latestReleases[r.plugin_name]) {
+            latestReleases[r.plugin_name] = { version: r.version, download_url: r.download_url };
+        }
+    });
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -301,7 +316,7 @@ function siteRowHtml(s) {
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}${!s.has_crm?'<span class="no-crm-badge">CRM non collegato</span>':''}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}</td>
+        <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version||'—')}${(()=>{const lr=latestReleases[s.plugin_name];return lr&&s.plugin_version&&s.plugin_version!==lr.version?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
         <td><button class="btn-ping" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button></td>
     </tr>`;
@@ -352,15 +367,16 @@ async function loadSiteDetail(siteId, silent = false) {
     const allStatuses = [heartbeatStatus,...Object.values(integrationStatus).map(i=>i.status)].filter(s=>s!=='grey');
     const overallStatus = allStatuses.includes('red')?'red':allStatuses.includes('yellow')?'yellow':'green';
 
-    const LATEST = {'in3pida-form-2':'2.2.7'};
-    const latestVersion = LATEST[site.plugin_name]||null;
+    const latestInfo      = latestReleases[site.plugin_name] || null;
+    const latestVersion   = latestInfo ? latestInfo.version : null;
+    const latestDownloadUrl = latestInfo ? latestInfo.download_url : null;
     const versionOk = !latestVersion || site.plugin_version === latestVersion;
 
     const allMessages = (logs||[]).map(l=>l.message||'');
     const suggestions = [];
     if (allMessages.some(m=>m.includes('BAD_CONTACT_MSISDN'))) suggestions.push({level:'error',title:'Numero di telefono non valido (Amelia)',action:'Amelia rifiuta il numero perché non è nel formato internazionale. Usa il campo telefono con validazione attiva.'});
     if (allMessages.some(m=>m.includes('PGRST204'))) suggestions.push({level:'error',title:'Colonna mancante in Supabase',action:'Il form cerca una colonna che non esiste. Verifica i nomi delle colonne nelle impostazioni del form → Supabase.'});
-    if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
+    if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:site.api_key&&latestDownloadUrl?`Usa il pulsante "Aggiorna ora" in Informazioni sito.`:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
 
     const siteName   = site.site_name || site.site_url || siteId;
     const pluginName = site.plugin_name;
@@ -381,7 +397,7 @@ async function loadSiteDetail(siteId, silent = false) {
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
-                ${latestVersion&&!versionOk?`<div style="padding:12px 26px 0"><div class="version-row"><span>Versione installata: <strong>${esc(site.plugin_version)}</strong></span><span class="version-badge warn">Aggiornamento disponibile: v${esc(latestVersion)}</span></div></div>`:''}
+                ${latestVersion&&!versionOk?`<div style="padding:12px 26px 0"><div class="version-row"><span>Versione installata: <strong>${esc(site.plugin_version)}</strong></span><span class="version-badge warn">Disponibile: v${esc(latestVersion)}</span>${site.api_key&&latestDownloadUrl?`<button class="btn-update" id="btn-do-update">Aggiorna ora</button>`:''}</div></div>`:''}
                 <div class="info-grid">
                     ${infoRow('Sito',site.site_name)}${infoRow('URL',site.site_url)}${infoRow('Plugin ver.',site.plugin_version)}${infoRow('WordPress',site.wp_version)}${infoRow('PHP',site.php_version)}${infoRow('Tema attivo',site.theme_active)}${infoRow('Installato il',fmtDate(site.first_seen))}${infoRow('Site ID',site.site_id,true)}
                 </div>
@@ -412,8 +428,47 @@ async function loadSiteDetail(siteId, silent = false) {
 
     document.getElementById('back-to-sites').addEventListener('click', () => loadSites(pluginName));
 
+    const btnDoUpdate = document.getElementById('btn-do-update');
+    if (btnDoUpdate) {
+        btnDoUpdate.addEventListener('click', () => updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate));
+    }
+
     const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
     if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
+}
+
+// ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn) {
+    if (!confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
+    btn.textContent = 'Aggiornamento in corso...';
+    btn.disabled = true;
+    try {
+        const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, download_url: downloadUrl }),
+        });
+        let json = {};
+        try { json = await resp.json(); } catch {}
+        if (resp.ok && json.success) {
+            btn.textContent = 'Aggiornato!';
+            btn.style.background = 'var(--cyan)';
+            btn.style.color = 'white';
+            setTimeout(() => loadSiteDetail(siteId), 3000);
+        } else {
+            btn.textContent = 'Errore — riprova';
+            btn.style.background = 'var(--red, #ef4444)';
+            btn.style.color = 'white';
+            alert('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
+            setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
+        }
+    } catch (e) {
+        btn.textContent = 'Errore connessione';
+        btn.style.background = 'var(--red, #ef4444)';
+        btn.style.color = 'white';
+        alert('Impossibile contattare il sito:\n' + e.message);
+        setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
+    }
 }
 
 // ─── PING DATA ────────────────────────────────────────────────────────────────
