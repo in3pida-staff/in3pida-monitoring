@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('nav-users').style.display = '';
     }
 
-    loadLatest();
+    await loadLatest();
     loadPlugins();
     setInterval(refresh, 60000);
 
@@ -579,19 +579,29 @@ async function loadSiteDetail(siteId, silent = false) {
 
     el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {
-            btn.style.opacity = '.4'; btn.style.pointerEvents = 'none';
             const key    = btn.dataset.key;
-            const value  = parseInt(btn.dataset.value);
+            const value  = parseInt(btn.dataset.value); // valore da impostare (0 o 1)
             const sid    = btn.dataset.site;
             const url    = btn.dataset.url;
             const apiKey = btn.dataset.apikey;
+            const nowOn  = value === 1; // nuovo stato dopo il click
+
+            // Aggiornamento visivo immediato
+            btn.style.background    = nowOn ? 'var(--cyan)' : 'var(--magenta)';
+            btn.style.pointerEvents = 'none';
+            const knob = btn.querySelector('span');
+            if (knob) knob.style.left = nowOn ? '21px' : '3px';
+            const stateLabel = btn.parentElement.querySelector('span:first-child');
+            if (stateLabel) { stateLabel.textContent = nowOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = nowOn ? 'var(--cyan)' : 'var(--magenta)'; }
+            btn.dataset.value = nowOn ? 0 : 1;
+
             try {
                 if (key === '__semafori__') {
-                    const {error: sbErr} = await _SB.from('mon_sites').update({feature_dot_db: value===1, feature_dot_crm: value===1, feature_dot_amelia: value===1}).eq('site_id', sid);
-                    if (sbErr) { alert('Errore Supabase: ' + sbErr.message + '\n\nEsegui la migrazione add_dot_flags.sql nel SQL Editor di Supabase.'); btn.style.opacity='1'; btn.style.pointerEvents=''; return; }
+                    const {error: sbErr} = await _SB.from('mon_sites').update({feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn}).eq('site_id', sid);
+                    if (sbErr) throw new Error(sbErr.message);
                     if (url && apiKey) {
                         for (const k of ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']) {
-                            await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                            fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
                                 method: 'POST', headers: {'Content-Type':'application/json'},
                                 body: JSON.stringify({ api_key: apiKey, key: k, value }),
                             }).catch(()=>{});
@@ -599,16 +609,25 @@ async function loadSiteDetail(siteId, silent = false) {
                     }
                 } else {
                     const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
-                    if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
+                    if (sbKey) { const {error:e} = await _SB.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
                     if (url && apiKey) {
-                        await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                        fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
                             method: 'POST', headers: {'Content-Type':'application/json'},
                             body: JSON.stringify({ api_key: apiKey, key, value }),
                         }).catch(()=>{});
                     }
                 }
-                setTimeout(() => loadSiteDetail(sid), 800);
-            } catch { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
+            } catch(err) {
+                // Ripristina stato precedente in caso di errore
+                const wasOn = !nowOn;
+                btn.style.background = wasOn ? 'var(--cyan)' : 'var(--magenta)';
+                if (knob) knob.style.left = wasOn ? '21px' : '3px';
+                if (stateLabel) { stateLabel.textContent = wasOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = wasOn ? 'var(--cyan)' : 'var(--magenta)'; }
+                btn.dataset.value = value;
+                console.error('Toggle error:', err.message);
+            } finally {
+                btn.style.pointerEvents = '';
+            }
         });
     });
 
