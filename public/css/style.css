@@ -421,11 +421,12 @@ body {
 /* ─── TABLE ──────────────────────────────────────────────────────────────── */
 table.sites-table { width: 100%; border-collapse: collapse; }
 table.sites-table th {
-    text-align: left; padding: 12px 26px;
+    text-align: left; padding: 12px 14px;
     font-size: 11px; font-weight: 700; color: #999;
     background: #fafafa; border-bottom: 1px solid var(--border);
 }
-table.sites-table td { padding: 15px 26px; font-size: 13px; border-bottom: 1px solid #f4f4f8; }
+table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; }
+table.sites-table td:last-child { white-space: nowrap; display: flex; gap: 6px; align-items: center; }
 table.sites-table tr:last-child td { border-bottom: none; }
 table.sites-table tbody tr { cursor: pointer; transition: background .12s; }
 table.sites-table tbody tr:hover td { background: #fdf0f5; }
@@ -455,9 +456,9 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 .semaforo-detail { font-size: 11px; color: var(--grey); text-align: right; max-width: 240px; }
 
 .info-grid { display: grid; grid-template-columns: 1fr 1fr; }
-.info-row  { padding: 12px 26px; border-bottom: 1px solid #f4f4f8; }
-.info-row:nth-child(odd)  { border-right: 1px solid #f4f4f8; }
-.info-row:last-child, .info-row:nth-last-child(2):nth-child(odd) { border-bottom: none; }
+.info-grid .info-row { display: block; padding: 12px 26px; border-bottom: 1px solid #f4f4f8; border-top: none; }
+.info-grid .info-row:nth-child(odd)  { border-right: 1px solid #f4f4f8; }
+.info-grid .info-row:last-child, .info-grid .info-row:nth-last-child(2):nth-child(odd) { border-bottom: none; }
 .info-label { font-size: 11px; color: var(--grey); margin-bottom: 3px; }
 .info-value { font-weight: 600; font-size: 13px; }
 
@@ -533,6 +534,19 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 .version-badge.ok   { background: #e0f7f9; color: var(--cyan2); }
 .version-badge.warn { background: #fce8ef; color: var(--magenta); }
 
+/* ─── BTN UPDATE ─────────────────────────────────────────────────────────── */
+.btn-update {
+    background: var(--magenta); border: none; color: white;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    transition: all .15s; white-space: nowrap; margin-left: auto;
+}
+.btn-update:hover    { background: var(--magenta2); }
+.btn-update:disabled { opacity: .5; cursor: default; }
+.btn-update-row { font-size: 11px; padding: 5px 12px; margin-left: 0; }
+.btn-update-row[data-outdated="0"] { background: var(--light); color: var(--grey); border: 1.5px solid var(--border); }
+.btn-update-row[data-outdated="0"]:hover { background: var(--light); color: var(--grey); }
+
 /* ─── BTN DETAIL ─────────────────────────────────────────────────────────── */
 .btn-detail {
     background: var(--light); border: none; color: var(--dark);
@@ -597,6 +611,15 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 }
 .btn-ping:hover    { background: var(--cyan); border-color: var(--cyan); color: white; }
 .btn-ping:disabled { opacity: .5; cursor: default; }
+.btn-enable-crm {
+    background: var(--light); border: 1.5px solid var(--border);
+    color: var(--grey); font-family: var(--font);
+    font-size: 11px; font-weight: 700;
+    padding: 4px 10px; border-radius: 8px; cursor: pointer;
+    transition: all .15s; white-space: nowrap; margin-left: 8px;
+}
+.btn-enable-crm:hover    { background: var(--cyan); border-color: var(--cyan); color: white; }
+.btn-enable-crm:disabled { opacity: .5; cursor: default; }
 
 /* ─── PING MODAL ─────────────────────────────────────────────────────────── */
 .ping-overlay {
@@ -667,6 +690,51 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
     padding: 12px 16px; border-radius: 8px;
     font-size: 13px; margin-top: 14px; display: none;
 }
+
+/* ─── LOGIN ESTESO ───────────────────────────────────────────────────────── */
+.login-msg { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+.login-msg-success { background: #e6f9f0; color: #1a7a4a; }
+.login-msg-error   { background: var(--red-bg); color: var(--red-text); }
+.btn-link  { background: none; border: none; color: var(--magenta); font-size: 12px; font-weight: 700; cursor: pointer; padding: 0; }
+.btn-link:hover { text-decoration: underline; }
+.login-divider { position: relative; text-align: center; margin: 20px 0; }
+.login-divider::before { content:''; position:absolute; inset:50% 0 auto; height:1px; background:var(--border); }
+.login-divider span { position: relative; background: var(--white); padding: 0 12px; font-size: 11px; color: var(--grey); letter-spacing: .05em; font-weight: 600; }
+.btn-google {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+    background: var(--white); border: 1.5px solid var(--border); border-radius: 10px;
+    padding: 13px 20px; font-family: var(--font); font-size: 14px; font-weight: 600;
+    color: var(--dark); cursor: pointer; transition: border-color .15s, background .15s;
+}
+.btn-google:hover { border-color: var(--magenta); background: #fdf5f8; }
+.btn-google:disabled { opacity: .6; cursor: default; }
+.login-register { font-size: 13px; color: var(--grey); margin-top: 18px; }
+.login-register a { color: var(--magenta); font-weight: 700; text-decoration: none; }
+.login-register a:hover { text-decoration: underline; }
+
+/* ─── UTENTI ADMIN ───────────────────────────────────────────────────────── */
+.search-input {
+    padding: 8px 14px; border: 1.5px solid var(--border); border-radius: 20px;
+    font-family: var(--font); font-size: 13px; color: var(--dark);
+    outline: none; background: var(--light); min-width: 220px;
+    transition: border-color .15s;
+}
+.search-input:focus { border-color: var(--magenta); background: white; }
+.user-initial {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--magenta);
+    color: white; font-weight: 800; font-size: 14px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.user-self-tag { font-size: 11px; color: var(--grey); font-weight: 400; margin-left: 4px; }
+.role-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+.role-badge-admin { background: #fff0f6; color: var(--magenta); }
+.role-badge-user  { background: #eef6fd; color: var(--cyan); }
+.profile-input select, select.profile-input {
+    width: 100%; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 10px;
+    font-family: var(--font); font-size: 14px; color: var(--dark);
+    outline: none; background: #fafafa; transition: border-color .15s;
+}
+select.profile-input:focus, .profile-input select:focus { border-color: var(--magenta); background: white; }
 
 /* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
