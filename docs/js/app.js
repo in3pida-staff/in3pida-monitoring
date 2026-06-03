@@ -346,7 +346,7 @@ async function loadSites(pluginName, silent = false) {
         { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
         { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
         { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li ? li.version : '—', label: 'Ultima versione', color: '#22c55e' },
+        { num: '↑', display: li ? li.version : '—', label: 'Ultima versione' },
     ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
