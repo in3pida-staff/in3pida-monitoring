@@ -398,10 +398,10 @@ function siteRowHtml(s) {
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Stats');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:#ef4444;font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:#bbb">—</span>';})()}</td>
+        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:var(--magenta);font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:#bbb">—</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
-        <td style="display:flex;gap:6px;align-items:center">
+        <td style="white-space:nowrap">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
             ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </td>
@@ -537,10 +537,10 @@ async function loadSiteDetail(siteId, silent = false) {
             <div class="card-header"><span class="card-title">Funzionalità</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
-                    {key:'if2_feature_stats',        label:'Statistiche',   val:site.feature_stats},
-                    {key:'if2_feature_crm_tab',      label:'CRM',           val:site.feature_crm_tab},
-                    {key:'if2_feature_settings_tab', label:'Impostazioni',  val:site.feature_settings_tab},
-                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'#22c55e':'#ef4444'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'#ef4444':'#22c55e'};background:transparent;color:${on?'#ef4444':'#22c55e'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
+                    {key:'if2_feature_stats',        label:'Statistiche',          val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',     val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida', val:site.feature_settings_tab},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'var(--magenta)':'var(--cyan)'};background:transparent;color:${on?'var(--magenta)':'var(--cyan)'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
             </div>
         </div>
         <div class="card">
