@@ -143,8 +143,10 @@ function semverGt(a, b) {
 function latestInfo(pluginName) {
     const v = latestVersions[pluginName];
     if (!v) return null;
-    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${v}.zip` };
-    return { version: v, download_url: urls[pluginName] || '' };
+    const version = typeof v === 'object' ? v.version : v;
+    const date    = typeof v === 'object' ? v.date    : null;
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
+    return { version, date, download_url: urls[pluginName] || '' };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -346,7 +348,7 @@ async function loadSites(pluginName, silent = false) {
         { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
         { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
         { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li ? li.version : '—', label: 'Ultima versione' },
+        { num: '↑', display: li?.date || '—', label: 'Ultimo aggiornamento' },
     ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
