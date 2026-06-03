@@ -214,10 +214,11 @@ async function loadPlugins(silent = false) {
 
     const active = list.reduce((s, p) => s + p.active, 0);
     const errors = list.reduce((s, p) => s + p.errors, 0);
+    const firstPlugin = pluginNames[0] || null;
     setHero('Monitoring', 'in3pida Monitoring', [
         { num: list.length, label: 'Plugin monitorati' },
-        { num: active, label: 'Plugin attivi' },
-        { num: errors, label: 'Siti con errori', clickable: true, action: 'errors' }
+        { num: active,  label: 'Plugin attivi',    onclick: firstPlugin ? () => loadSites(firstPlugin) : null },
+        { num: errors,  label: 'Siti con errori',  onclick: loadErrors },
     ]);
 
     el.innerHTML = `
@@ -745,8 +746,12 @@ function setHero(label, title, stats) {
     document.getElementById('hero-label').textContent = label;
     document.getElementById('hero-title').textContent = title;
     const el = document.getElementById('sw-stats');
-    if (stats&&stats.length>0) { el.style.display=''; const colors=['var(--magenta)','var(--cyan)','var(--dark)']; el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" ${s.clickable?`data-action="${esc(s.action)}"`:''}>  <div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join(''); }
-    else el.style.display='none';
+    if (stats&&stats.length>0) {
+        el.style.display='';
+        const colors=['var(--magenta)','var(--cyan)','var(--dark)'];
+        el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join('');
+        stats.forEach((s,i)=>{ if(s.onclick){ const card=el.querySelector(`[data-i="${i}"]`); if(card) card.addEventListener('click', s.onclick); } });
+    } else el.style.display='none';
 }
 function setBreadcrumb(items) {
     const el = document.getElementById('breadcrumb');
