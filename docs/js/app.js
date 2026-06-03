@@ -201,10 +201,13 @@ async function loadPlugins(silent = false) {
     const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
     (eventsAll || []).forEach(e => {
         const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
-        if (dailyGlobal[day] !== undefined) dailyGlobal[day][pn] = (dailyGlobal[day][pn] || 0) + 1;
+        if (dailyGlobal[day] !== undefined) {
+            if (!dailyGlobal[day][pn]) dailyGlobal[day][pn] = new Set();
+            dailyGlobal[day][pn].add(e.site_id);
+        }
     });
     const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
-    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, counts]) => ({ date, count: counts[pn] || 0 })) }));
+    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
 
     const list = Object.values(plugins);
     if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
@@ -221,7 +224,7 @@ async function loadPlugins(silent = false) {
         <p class="section-title">Plugin installati</p>
         <div class="plugins-grid">${list.map(pluginCardHtml).join('')}</div>
         ${dailySeries.length > 0 ? `<div class="card" style="margin-top:24px">
-            <div class="card-header"><span class="card-title">Andamento richieste</span>
+            <div class="card-header"><span class="card-title">Installazioni con richieste</span>
             <div class="chart-toggle" id="global-toggle">
                 <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
                 <button class="chart-toggle-btn" data-range="30">30 giorni</button>
