@@ -537,13 +537,11 @@ async function loadSiteDetail(siteId, silent = false) {
             <div class="card-header"><span class="card-title">Funzionalità</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
-                    {key:'if2_feature_stats',        label:'Statistiche',          val:site.feature_stats},
-                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',     val:site.feature_crm_tab},
-                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida', val:site.feature_settings_tab},
-                    {key:'if2_feature_dot_db',       label:'Semaforo DB',          val:site.feature_dot_db},
-                    {key:'if2_feature_dot_crm',      label:'Semaforo CRM',         val:site.feature_dot_crm},
-                    {key:'if2_feature_dot_amelia',   label:'Semaforo Amelia',      val:site.feature_dot_amelia},
-                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'var(--magenta)':'var(--cyan)'};background:transparent;color:${on?'var(--magenta)':'var(--cyan)'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
+                    {key:'if2_feature_stats',        label:'Statistiche',            val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',       val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida',   val:site.feature_settings_tab},
+                    {key:'__semafori__',             label:'Semafori DB / CRM / Amelia', val:site.feature_dot_db!==false&&site.feature_dot_db!==0&&site.feature_dot_crm!==false&&site.feature_dot_crm!==0&&site.feature_dot_amelia!==false&&site.feature_dot_amelia!==0},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattiva'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="width:44px;height:26px;border-radius:13px;background:${on?'var(--cyan)':'var(--magenta)'};border:none;cursor:pointer;position:relative;padding:0;flex-shrink:0"><span style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on?'21px':'3px'};display:block;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span></button></div></div>`;}).join('')}
             </div>
         </div>
         <div class="card">
@@ -581,24 +579,36 @@ async function loadSiteDetail(siteId, silent = false) {
 
     el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {
-            btn.disabled = true; btn.textContent = '...';
-            const key   = btn.dataset.key;
-            const value = parseInt(btn.dataset.value);
-            const sid   = btn.dataset.site;
-            const url   = btn.dataset.url;
+            btn.style.opacity = '.4'; btn.style.pointerEvents = 'none';
+            const key    = btn.dataset.key;
+            const value  = parseInt(btn.dataset.value);
+            const sid    = btn.dataset.site;
+            const url    = btn.dataset.url;
             const apiKey = btn.dataset.apikey;
             try {
-                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_dot_db:'feature_dot_db',if2_feature_dot_crm:'feature_dot_crm',if2_feature_dot_amelia:'feature_dot_amelia'}[key];
-                if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
-                if (url && apiKey) {
-                    await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ api_key: apiKey, key, value }),
-                    }).catch(()=>{});
+                if (key === '__semafori__') {
+                    const {error: sbErr} = await _SB.from('mon_sites').update({feature_dot_db: value===1, feature_dot_crm: value===1, feature_dot_amelia: value===1}).eq('site_id', sid);
+                    if (sbErr) { alert('Errore Supabase: ' + sbErr.message + '\n\nEsegui la migrazione add_dot_flags.sql nel SQL Editor di Supabase.'); btn.style.opacity='1'; btn.style.pointerEvents=''; return; }
+                    if (url && apiKey) {
+                        for (const k of ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']) {
+                            await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                                method: 'POST', headers: {'Content-Type':'application/json'},
+                                body: JSON.stringify({ api_key: apiKey, key: k, value }),
+                            }).catch(()=>{});
+                        }
+                    }
+                } else {
+                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
+                    if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
+                    if (url && apiKey) {
+                        await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                            method: 'POST', headers: {'Content-Type':'application/json'},
+                            body: JSON.stringify({ api_key: apiKey, key, value }),
+                        }).catch(()=>{});
+                    }
                 }
                 setTimeout(() => loadSiteDetail(sid), 800);
-            } catch { btn.disabled = false; btn.textContent = 'Errore'; }
+            } catch { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
         });
     });
 
