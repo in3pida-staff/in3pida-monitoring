@@ -540,6 +540,9 @@ async function loadSiteDetail(siteId, silent = false) {
                     {key:'if2_feature_stats',        label:'Statistiche',          val:site.feature_stats},
                     {key:'if2_feature_crm_tab',      label:'Integrazione CRM',     val:site.feature_crm_tab},
                     {key:'if2_feature_settings_tab', label:'Impostazioni in3pida', val:site.feature_settings_tab},
+                    {key:'if2_feature_dot_db',       label:'Semaforo DB',          val:site.feature_dot_db},
+                    {key:'if2_feature_dot_crm',      label:'Semaforo CRM',         val:site.feature_dot_crm},
+                    {key:'if2_feature_dot_amelia',   label:'Semaforo Amelia',      val:site.feature_dot_amelia},
                 ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'var(--magenta)':'var(--cyan)'};background:transparent;color:${on?'var(--magenta)':'var(--cyan)'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
             </div>
         </div>
@@ -585,7 +588,7 @@ async function loadSiteDetail(siteId, silent = false) {
             const url   = btn.dataset.url;
             const apiKey = btn.dataset.apikey;
             try {
-                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
+                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_dot_db:'feature_dot_db',if2_feature_dot_crm:'feature_dot_crm',if2_feature_dot_amelia:'feature_dot_amelia'}[key];
                 if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
                 if (url && apiKey) {
                     await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
