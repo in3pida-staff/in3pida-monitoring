@@ -350,7 +350,7 @@ async function loadSites(pluginName, silent = false) {
         { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
         { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
         { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li?.date || '—', label: 'Ultimo aggiornamento' },
+        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: 'Ultima versione' },
     ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
