@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS mon_sites (
     wp_version text,
     php_version text,
     theme_active text,
+    has_supabase boolean DEFAULT false,
+    has_crm boolean DEFAULT false,
+    has_amelia boolean DEFAULT false,
+    feature_stats boolean DEFAULT true,
+    feature_crm_tab boolean DEFAULT true,
+    feature_settings_tab boolean DEFAULT true,
     first_seen timestamptz DEFAULT now(),
     last_heartbeat timestamptz,
     created_at timestamptz DEFAULT now()

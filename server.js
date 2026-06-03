@@ -1,17 +1,38 @@
+// Polyfill fetch/Headers PRIMA di tutto per evitare undici/WebAssembly su SiteGround
+// (avviare con: node --no-experimental-fetch server.js su Node.js 18)
+try {
+    const nf = require('node-fetch');
+    if (!global.fetch)   global.fetch   = nf;
+    if (!global.Headers) global.Headers = nf.Headers;
+    if (!global.Request) global.Request = nf.Request;
+    if (!global.Response) global.Response = nf.Response;
+} catch(e) {}
+
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const { createClient } = require('@supabase/supabase-js');
-const path = require('path');
+const path  = require('path');
 const fs    = require('fs');
+const https = require('https');
 const multer = require('multer');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+const nodeFetch = global.fetch;
+
+// ws richiesto da Supabase su Node.js < 22
+let wsTransport;
+try { wsTransport = require('ws'); } catch(e) {}
+
 const supabase = createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
+    process.env.SUPABASE_SERVICE_KEY,
+    {
+        global:   { fetch: nodeFetch },
+        realtime: wsTransport ? { transport: wsTransport } : {},
+    }
 );
 
 app.use(express.json());
@@ -413,7 +434,7 @@ app.get('/api/sites/:site_id', requireAuth, async (req, res) => {
         const overallStatus = allStatuses.includes('red') ? 'red' : allStatuses.includes('yellow') ? 'yellow' : 'green';
 
         // Versione plugin
-        const LATEST = { 'in3pida-form-2': '2.2.6' };
+        const LATEST = { 'in3pida-form-2': '2.2.63' };
         const latestVersion = LATEST[site.plugin_name] || null;
         const versionOk = !latestVersion || site.plugin_version === latestVersion;
 
@@ -441,6 +462,12 @@ app.get('/api/sites/:site_id', requireAuth, async (req, res) => {
             action: `Aggiorna il plugin dalla bacheca WordPress: Plugin → in3pida Form → Aggiorna. La versione ${latestVersion} include correzioni di bug e miglioramenti.`
         });
 
+        const features = {
+            stats:        site.feature_stats        !== false && site.feature_stats        !== 0,
+            crm_tab:      site.feature_crm_tab      !== false && site.feature_crm_tab      !== 0,
+            settings_tab: site.feature_settings_tab !== false && site.feature_settings_tab !== 0,
+        };
+
         res.json({
             site,
             heartbeat: { status: heartbeatStatus, hours_since: Math.round(hrs), last_heartbeat: site.last_heartbeat },
@@ -452,7 +479,8 @@ app.get('/api/sites/:site_id', requireAuth, async (req, res) => {
             overall_status: overallStatus,
             daily_submissions: Object.entries(dailyCounts).map(([date, count]) => ({ date, count })),
             version: { installed: site.plugin_version, latest: latestVersion, ok: versionOk },
-            suggestions
+            suggestions,
+            features
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -482,6 +510,57 @@ app.get('/api/errors', requireAuth, async (req, res) => {
         });
 
         res.json(Object.values(bysite));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ─── FEATURE FLAGS ────────────────────────────────────────────────────────────
+
+app.post('/api/sites/:site_id/features', requireAuth, async (req, res) => {
+    const siteId = req.params.site_id;
+    const { key, value } = req.body;
+
+    const allowed = ['if2_feature_stats', 'if2_feature_crm_tab', 'if2_feature_settings_tab'];
+    if (!allowed.includes(key)) return res.status(400).json({ error: 'Chiave non consentita' });
+
+    try {
+        const { data: site, error: se } = await supabase
+            .from('mon_sites').select('api_key, site_url').eq('site_id', siteId).single();
+        if (se || !site) return res.status(404).json({ error: 'Sito non trovato' });
+
+        // Chiama l'endpoint REST del plugin WordPress
+        const pluginUrl = site.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config';
+        let pluginOk = false;
+        try {
+            pluginOk = await new Promise((resolve) => {
+                const body = JSON.stringify({ api_key: site.api_key, key, value: value ? 1 : 0 });
+                const u = new URL(pluginUrl);
+                const req = https.request({
+                    hostname: u.hostname, path: u.pathname + u.search,
+                    method: 'POST', timeout: 8000,
+                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+                }, (res) => resolve(res.statusCode >= 200 && res.statusCode < 300));
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => { req.destroy(); resolve(false); });
+                req.write(body);
+                req.end();
+            });
+        } catch (fetchErr) {
+            // Plugin non raggiungibile — aggiorna solo il DB locale
+        }
+
+        // Mappa chiave WP option → colonna Supabase
+        const colMap = {
+            if2_feature_stats:        'feature_stats',
+            if2_feature_crm_tab:      'feature_crm_tab',
+            if2_feature_settings_tab: 'feature_settings_tab',
+        };
+        await supabase.from('mon_sites')
+            .update({ [colMap[key]]: value ? true : false })
+            .eq('site_id', siteId);
+
+        res.json({ ok: true, plugin_updated: pluginOk });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

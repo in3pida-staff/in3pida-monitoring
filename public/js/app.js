@@ -386,7 +386,7 @@ async function loadSites(pluginName, silent = false) {
             <table class="sites-table">
                 <thead><tr>
                     <th>Stato</th><th>Sito</th><th>Ultima richiesta</th>
-                    <th>Supabase / CRM / Amelia</th><th>Ver.</th><th>Installato il</th><th></th>
+                    <th>Supabase / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th></th>
                 </tr></thead>
                 <tbody>${sites.map(siteRowHtml).join('')}</tbody>
             </table>
@@ -430,6 +430,18 @@ function siteRowHtml(s) {
         return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`;
     };
     const crmBadge = s.has_crm ? '' : `<span class="no-crm-badge">CRM non collegato</span>`;
+    const ft = (val) => val !== false && val !== 0 && val !== null && val !== undefined;
+    const fStat = ft(s.feature_stats);
+    const fCrm  = ft(s.feature_crm_tab);
+    const fSet  = ft(s.feature_settings_tab);
+    const anyOff = !fStat || !fCrm || !fSet;
+    const featureCell = anyOff
+        ? `<div style="display:flex;flex-direction:column;gap:2px;font-size:11px">
+            ${!fStat ? '<span style="color:#ef4444;font-weight:600">Statistiche OFF</span>' : ''}
+            ${!fCrm  ? '<span style="color:#ef4444;font-weight:600">CRM OFF</span>' : ''}
+            ${!fSet  ? '<span style="color:#ef4444;font-weight:600">Impostazioni OFF</span>' : ''}
+           </div>`
+        : `<span style="font-size:11px;color:#bbb">—</span>`;
     return `
         <tr data-site-id="${esc(s.site_id)}">
             <td>${dot(s.status)}</td>
@@ -445,8 +457,9 @@ function siteRowHtml(s) {
                     <span class="integ-dots-label">Amelia</span>${dotFor('amelia')}
                 </div>
             </td>
-            <td style="font-size:12px;color:var(--grey)">${esc(s.plugin_version || '—')}</td>
-            <td style="font-size:12px;color:var(--grey)">${fmtDate(s.first_seen)}</td>
+            <td>${featureCell}</td>
+            <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version || '—')}</td>
+            <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
             <td>
                 <button class="btn-ping" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name || s.site_id)}">
                     Testa ora
@@ -544,6 +557,29 @@ async function loadSiteDetail(siteId, silent = false) {
             </div>
         </div>
 
+        <div class="card" id="card-features">
+            <div class="card-header"><span class="card-title">Funzionalità</span></div>
+            <div style="padding:4px 26px 16px">
+                ${[
+                    { key: 'if2_feature_stats',        label: 'Statistiche',   enabled: d.features?.stats        !== false },
+                    { key: 'if2_feature_crm_tab',      label: 'CRM',           enabled: d.features?.crm_tab      !== false },
+                    { key: 'if2_feature_settings_tab', label: 'Impostazioni',  enabled: d.features?.settings_tab !== false },
+                ].map(f => `
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8">
+                    <span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span>
+                    <div style="display:flex;align-items:center;gap:14px">
+                        <span style="font-size:.78rem;font-weight:700;color:${f.enabled ? '#22c55e' : '#ef4444'}">${f.enabled ? 'Attiva' : 'Disattivata'}</span>
+                        <button class="btn-feature-toggle"
+                            data-key="${esc(f.key)}"
+                            data-value="${f.enabled ? 0 : 1}"
+                            style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${f.enabled ? '#ef4444' : '#22c55e'};background:transparent;color:${f.enabled ? '#ef4444' : '#22c55e'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">
+                            ${f.enabled ? 'Disattiva' : 'Attiva'}
+                        </button>
+                    </div>
+                </div>`).join('')}
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">Richieste ricevute giorno per giorno</span>
@@ -630,6 +666,27 @@ async function loadSiteDetail(siteId, silent = false) {
         </div>`;
 
     document.getElementById('back-to-sites').addEventListener('click', () => loadSites(pluginName));
+
+    // Feature flags toggles
+    el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const key   = btn.dataset.key;
+            const value = parseInt(btn.dataset.value);
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                await fetch(`/api/sites/${encodeURIComponent(siteId)}/features`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key, value }),
+                });
+                loadSiteDetail(siteId);
+            } catch {
+                btn.disabled = false;
+                btn.textContent = value === 1 ? 'Attiva' : 'Disattiva';
+            }
+        });
+    });
 
     // Grafico richieste
     if (d.daily_submissions?.length > 0) {
