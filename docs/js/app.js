@@ -341,10 +341,12 @@ async function loadSites(pluginName, silent = false) {
     const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
         r.style.display = f===null||(f==='green'&&r.dataset.status==='green')||(f==='inactive'&&r.dataset.status!=='green') ? '' : 'none';
     });
+    const li = latestInfo(pluginName);
     setHero(displayName(pluginName), displayName(pluginName), [
         { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
         { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
         { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
+        { num: '↑', display: li ? li.version : '—', label: 'Ultima versione', color: '#22c55e' },
     ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
@@ -756,7 +758,7 @@ function setHero(label, title, stats) {
     if (stats&&stats.length>0) {
         el.style.display='';
         const colors=['var(--magenta)','var(--cyan)','var(--dark)'];
-        el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join('');
+        el.innerHTML=stats.map((s,i)=>{const bg=s.color||colors[i%colors.length];const icon=s.icon!==undefined?s.icon:s.num;const display=s.display!==undefined?s.display:s.num;return`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${bg}">${icon}</div><div class="sw-stat-text"><div class="sw-stat-num">${display}</div><div class="sw-stat-label">${s.label}</div></div></div>`;}).join('');
         stats.forEach((s,i)=>{ if(s.onclick){ const card=el.querySelector(`[data-i="${i}"]`); if(card) card.addEventListener('click', s.onclick); } });
     } else el.style.display='none';
 }
