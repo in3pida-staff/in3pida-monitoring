@@ -338,7 +338,14 @@ async function loadSites(pluginName, silent = false) {
 
     const active = enriched.filter(s=>s.status==='green').length;
     const inactive = enriched.filter(s=>s.status!=='green').length;
-    setHero(displayName(pluginName), displayName(pluginName), [{num:enriched.length,label:'Siti installati'},{num:active,label:'Plugin attivi'},{num:inactive,label:'Senza segnale'}]);
+    const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
+        r.style.display = f===null||(f==='green'&&r.dataset.status==='green')||(f==='inactive'&&r.dataset.status!=='green') ? '' : 'none';
+    });
+    setHero(displayName(pluginName), displayName(pluginName), [
+        { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
+        { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
+        { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
+    ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
 
@@ -397,7 +404,7 @@ function siteRowHtml(s) {
     const integ = s.last_integ || {};
     const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
     const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
-    return `<tr data-site-id="${esc(s.site_id)}">
+    return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
         <td>${dot(s.status)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
