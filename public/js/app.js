@@ -1,416 +1,389 @@
-// ─── STATE ────────────────────────────────────────────────────────────────────
-let currentView   = 'plugins';
-let currentPlugin = null;
-let currentSite   = null;
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const _SB = window.supabase.createClient(
+    'https://yyauvoqjdzrbmebeafit.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w'
+);
+
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+let currentView    = 'plugins';
+let currentPlugin  = null;
+let currentSite    = null;
+let latestVersions = {};
+let currentProfile = null;
+
+// ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
+const normalizeRecord = s => {
+    if (s.status !== 'error' || !s.error_message) return s;
+    const m = s.error_message.toLowerCase();
+    if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
+        return {...s, status:'skipped'};
+    }
+    return s;
+};
+const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    fetch('/auth/me').then(r => r.json()).then(d => {
-        if (!d.authenticated) { window.location.href = '/login.html'; return; }
-        loadProfile();
-        loadPlugins();
-        setInterval(refresh, 60000);
-    });
+document.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await _SB.auth.getSession();
+    if (!session) { window.location.href = 'login.html'; return; }
 
-    // Logo → home
+    const { data: profile } = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single();
+    if (!profile) {
+        await _SB.auth.signOut();
+        window.location.href = 'login.html?error=unauthorized';
+        return;
+    }
+
+    currentProfile = profile;
+    applyProfile(profile);
+
+    if (profile.role === 'admin') {
+        document.getElementById('nav-users').style.display = '';
+    }
+
+    loadLatest();
+    loadPlugins();
+    setInterval(refresh, 60000);
+
     document.getElementById('nav-home').addEventListener('click', loadPlugins);
-
-    // Nav items centro
     document.getElementById('nav-plugin').addEventListener('click', loadPlugins);
     document.getElementById('nav-errors').addEventListener('click', loadErrors);
+    document.getElementById('nav-users').addEventListener('click', loadUsers);
     document.getElementById('nav-info').addEventListener('click', () => {
         document.getElementById('info-overlay').style.display = 'flex';
     });
 
-    // Dropdown utente
-    const pill     = document.getElementById('user-pill');
+    const pill = document.getElementById('user-pill');
     const dropdown = document.getElementById('user-dropdown');
-    pill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-    });
+    pill.addEventListener('click', e => { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none'; });
     document.addEventListener('click', () => { dropdown.style.display = 'none'; });
     dropdown.addEventListener('click', e => e.stopPropagation());
 
-    document.getElementById('dd-logout').addEventListener('click', async () => {
-        await fetch('/auth/logout', { method: 'POST' });
-        window.location.href = '/login.html';
-    });
-    document.getElementById('dd-profile').addEventListener('click', () => {
-        dropdown.style.display = 'none';
-        openProfileModal();
-    });
+    document.getElementById('dd-logout').addEventListener('click', async () => { await _SB.auth.signOut(); window.location.href = 'login.html'; });
+    document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
-    // Modal legenda
     const infoOverlay = document.getElementById('info-overlay');
     document.getElementById('info-close').addEventListener('click', () => { infoOverlay.style.display = 'none'; });
-    infoOverlay.addEventListener('click', (e) => { if (e.target === infoOverlay) infoOverlay.style.display = 'none'; });
+    infoOverlay.addEventListener('click', e => { if (e.target === infoOverlay) infoOverlay.style.display = 'none'; });
 
-    // Modal profilo
     const profileOverlay = document.getElementById('profile-overlay');
     document.getElementById('profile-close').addEventListener('click', () => { profileOverlay.style.display = 'none'; });
-    profileOverlay.addEventListener('click', (e) => { if (e.target === profileOverlay) profileOverlay.style.display = 'none'; });
+    profileOverlay.addEventListener('click', e => { if (e.target === profileOverlay) profileOverlay.style.display = 'none'; });
     document.getElementById('profile-avatar-input').addEventListener('change', uploadAvatar);
     document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
 });
 
 // ─── PROFILO ─────────────────────────────────────────────────────────────────
-async function loadProfile() {
-    try {
-        const r = await fetch('/api/profile', { credentials: 'include' });
-        if (!r.ok) return;
-        const p = await r.json();
-        applyProfile(p);
-    } catch(e) {}
-}
-
 function applyProfile(p) {
-    const name = p.name || 'Mario';
+    const name = p.full_name || p.email || 'Utente';
     document.getElementById('nav-name').textContent = name;
     document.getElementById('dd-name').textContent  = name;
     document.getElementById('dd-email').textContent = p.email || '';
-
-    const avatarEl   = document.getElementById('nav-avatar');
-    const ddAvatarEl = document.getElementById('dd-avatar');
-    const previewEl  = document.getElementById('profile-avatar-preview');
-
-    if (p.avatar) {
-        const img1 = `<img src="${p.avatar}" alt="">`;
-        avatarEl.innerHTML   = img1;
-        ddAvatarEl.innerHTML = img1;
-        previewEl.innerHTML  = img1;
-    } else {
-        const init = name.charAt(0).toUpperCase();
-        avatarEl.textContent   = init;
-        ddAvatarEl.textContent = init;
-        previewEl.textContent  = init;
-    }
+    ['nav-avatar','dd-avatar','profile-avatar-preview'].forEach(id => {
+        const el = document.getElementById(id);
+        if (p.avatar_url) el.innerHTML = `<img src="${esc(p.avatar_url)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
+        else              el.textContent = name.charAt(0).toUpperCase();
+    });
 }
-
 function openProfileModal() {
-    fetch('/api/profile', { credentials: 'include' }).then(r => r.json()).then(p => {
-        document.getElementById('profile-name').value  = p.name  || '';
-        document.getElementById('profile-email').value = p.email || '';
-        applyProfile(p);
-        document.getElementById('profile-overlay').style.display = 'flex';
-    });
+    document.getElementById('profile-name').value  = currentProfile?.full_name  || '';
+    document.getElementById('profile-email').value = currentProfile?.email || '';
+    document.getElementById('profile-overlay').style.display = 'flex';
 }
-
-async function uploadAvatar(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('avatar', file);
-    const r = await fetch('/api/profile/avatar', { method: 'POST', body: fd, credentials: 'include' });
-    const j = await r.json();
-    if (j.ok) loadProfile();
+function uploadAvatar(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 80; canvas.height = 80;
+            canvas.getContext('2d').drawImage(img, 0, 0, 80, 80);
+            const avatar = canvas.toDataURL('image/jpeg', 0.85);
+            currentProfile = { ...currentProfile, avatar_url: avatar };
+            applyProfile(currentProfile);
+        };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
 }
-
 async function saveProfile() {
-    const name  = document.getElementById('profile-name').value.trim();
-    const email = document.getElementById('profile-email').value.trim();
-    const r = await fetch('/api/profile', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email })
-    });
-    const j = await r.json();
-    if (j.ok) {
-        applyProfile(j.profile);
-        document.getElementById('profile-overlay').style.display = 'none';
-    }
+    const name = document.getElementById('profile-name').value.trim();
+    if (!currentProfile) return;
+    const updates = { full_name: name || currentProfile.full_name, avatar_url: currentProfile.avatar_url || null };
+    await _SB.from('mon_profiles').update(updates).eq('id', currentProfile.id);
+    currentProfile = { ...currentProfile, ...updates };
+    applyProfile(currentProfile);
+    document.getElementById('profile-overlay').style.display = 'none';
 }
 
-// ─── ACTIVE NAV ──────────────────────────────────────────────────────────────
+// ─── VERSIONI ─────────────────────────────────────────────────────────────────
+async function loadLatest() {
+    try {
+        const r = await fetch('releases/latest.json?_=' + Date.now());
+        if (r.ok) latestVersions = await r.json();
+    } catch {}
+}
+function updateLatestVersions(sites) {
+    (sites || []).forEach(s => {
+        if (!s.plugin_version) return;
+        if (!latestVersions[s.plugin_name] || semverGt(s.plugin_version, latestVersions[s.plugin_name])) {
+            latestVersions[s.plugin_name] = s.plugin_version;
+        }
+    });
+}
+function semverGt(a, b) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        if ((pa[i]||0) > (pb[i]||0)) return true;
+        if ((pa[i]||0) < (pb[i]||0)) return false;
+    }
+    return false;
+}
+function latestInfo(pluginName) {
+    const v = latestVersions[pluginName];
+    if (!v) return null;
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${v}.zip` };
+    return { version: v, download_url: urls[pluginName] || '' };
+}
+
+// ─── NAV ──────────────────────────────────────────────────────────────────────
 function setActiveNav(id) {
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-    const el = document.getElementById(id);
-    if (el) el.classList.add('active');
+    const el = document.getElementById(id); if (el) el.classList.add('active');
+}
+async function refresh() {
+    await loadLatest();
+    if      (currentView === 'plugins')              loadPlugins(true);
+    else if (currentView === 'sites'  && currentPlugin) loadSites(currentPlugin, true);
+    else if (currentView === 'site'   && currentSite)   loadSiteDetail(currentSite, true);
+    else if (currentView === 'errors')               loadErrors(true);
 }
 
-function refresh() {
-    if      (currentView === 'plugins') loadPlugins(true);
-    else if (currentView === 'sites'   && currentPlugin) loadSites(currentPlugin, true);
-    else if (currentView === 'site'    && currentSite)   loadSiteDetail(currentSite, true);
-    else if (currentView === 'errors')                   loadErrors(true);
-}
-
-// ─── VIEW: HOME / PLUGIN ──────────────────────────────────────────────────────
+// ─── VIEW: PLUGIN ─────────────────────────────────────────────────────────────
 async function loadPlugins(silent = false) {
-    currentView = 'plugins';
-    showView('plugins');
-    setActiveNav('nav-plugin');
+    currentView = 'plugins'; showView('plugins'); setActiveNav('nav-plugin');
     setBreadcrumb([{ label: 'Home', active: true }]);
-
     const el = document.getElementById('plugins-container');
     if (!silent) el.innerHTML = loadingHtml();
 
-    const res = await fetch('/api/plugins');
-    if (!res.ok) { el.innerHTML = errorHtml(); return; }
-    const json = await res.json();
-    const plugins = json.plugins || json;
-    const dailySeries = json.daily_series || [];
+    const now = new Date();
+    const yesterday = new Date(now - 86400000);
+    const thirtyAgo = new Date(now - 30 * 86400000);
 
-    if (plugins.length === 0) {
-        el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno non appena i siti invieranno il primo segnale.');
-        setHero('Monitoring', 'in3pida Monitoring', []);
-        return;
-    }
+    const [r1, r2, r3] = await Promise.all([
+        _SB.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
+        _SB.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
+        _SB.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
+    ]);
+    const err = r1.error || r2.error || r3.error;
+    if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
+    const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
+    updateLatestVersions(sites);
 
-    const active = plugins.reduce((s, p) => s + (p.active || 0), 0);
-    const errors = plugins.reduce((s, p) => s + (p.errors || 0), 0);
+    const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
+    const plugins = {};
+    (sites || []).forEach(s => {
+        const nm = s.plugin_name;
+        if (!plugins[nm]) plugins[nm] = { name: nm, total: 0, active: 0, inactive: 0, errors: 0, versions: {} };
+        const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
+        plugins[nm].total++;
+        if (hrs < 25) plugins[nm].active++; else plugins[nm].inactive++;
+        if (sitesWithErrors.has(s.site_id)) plugins[nm].errors++;
+        if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
+    });
+    Object.values(plugins).forEach(p => {
+        p.status = (p.inactive > 0 && p.active === 0) ? 'red' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
+    });
 
+    const dailyGlobal = {};
+    for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyGlobal[d.toISOString().slice(0,10)] = {}; }
+    const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
+    (eventsAll || []).forEach(e => {
+        const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
+        if (dailyGlobal[day] !== undefined) dailyGlobal[day][pn] = (dailyGlobal[day][pn] || 0) + 1;
+    });
+    const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
+    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, counts]) => ({ date, count: counts[pn] || 0 })) }));
+
+    const list = Object.values(plugins);
+    if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
+
+    const active = list.reduce((s, p) => s + p.active, 0);
+    const errors = list.reduce((s, p) => s + p.errors, 0);
     setHero('Monitoring', 'in3pida Monitoring', [
-        { num: plugins.length, label: 'Plugin monitorati' },
-        { num: active,         label: 'Plugin attivi' },
-        { num: errors,         label: 'Siti con errori', clickable: true, action: 'errors' },
+        { num: list.length, label: 'Plugin monitorati' },
+        { num: active, label: 'Plugin attivi' },
+        { num: errors, label: 'Siti con errori', clickable: true, action: 'errors' }
     ]);
 
     el.innerHTML = `
         <p class="section-title">Plugin installati</p>
-        <div class="plugins-grid">
-            ${plugins.map(pluginCardHtml).join('')}
-        </div>
-        ${dailySeries.length > 0 ? `
-        <div class="card" style="margin-top:24px">
-            <div class="card-header">
-                <span class="card-title">Andamento richieste</span>
-                <div class="chart-toggle" id="global-toggle">
-                    <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
-                    <button class="chart-toggle-btn" data-range="30">30 giorni</button>
-                </div>
-            </div>
-            <div style="padding:20px 26px 24px">
-                <canvas id="chart-global" height="80"></canvas>
-            </div>
-        </div>` : ''}
-    `;
+        <div class="plugins-grid">${list.map(pluginCardHtml).join('')}</div>
+        ${dailySeries.length > 0 ? `<div class="card" style="margin-top:24px">
+            <div class="card-header"><span class="card-title">Andamento richieste</span>
+            <div class="chart-toggle" id="global-toggle">
+                <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+            </div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
+        </div>` : ''}`;
 
-    el.querySelectorAll('.plugin-card').forEach(card => {
-        card.addEventListener('click', () => loadSites(card.dataset.name));
-    });
+    el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
+    document.querySelectorAll('.sw-stat-card[data-action]').forEach(c => { c.style.cursor = 'pointer'; c.addEventListener('click', () => loadErrors()); });
 
-    // Rende cliccabile la stat card "Siti con errori"
-    document.querySelectorAll('.sw-stat-card[data-action]').forEach(c => {
-        c.style.cursor = 'pointer';
-        c.addEventListener('click', () => loadErrors());
-    });
-
-    // Grafico globale
     if (dailySeries.length > 0 && document.getElementById('chart-global')) {
-        const colors = ['#d82d6b', '#009bb9', '#181834'];
-        let globalChart = null;
-
-        function buildGlobalChart(range) {
-            const labels = dailySeries[0].data.slice(-range).map(r =>
-                new Date(r.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
-            );
-            const datasets = dailySeries.map((series, i) => {
-                const color = colors[i % colors.length];
-                return {
-                    label: displayName(series.plugin),
-                    data: series.data.slice(-range).map(r => r.count),
-                    borderColor: color,
-                    borderWidth: 2.5,
-                    pointBackgroundColor: color,
-                    pointRadius: 3,
-                    pointHoverRadius: 6,
-                    fill: i === 0,
-                    backgroundColor: i === 0 ? (ctx) => {
-                        const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-                        g.addColorStop(0, 'rgba(216,45,107,0.15)');
-                        g.addColorStop(1, 'rgba(216,45,107,0)');
-                        return g;
-                    } : 'transparent',
-                    tension: 0.4,
-                };
-            });
-            if (globalChart) globalChart.destroy();
-            globalChart = new Chart(document.getElementById('chart-global'), {
-                type: 'line',
-                data: { labels, datasets },
-                options: {
-                    plugins: { legend: { display: dailySeries.length > 1, labels: { font: { family: 'Montserrat', size: 11 }, boxWidth: 12 } } },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { font: { family: 'Montserrat', size: 10 }, maxTicksLimit: 10, color: '#999' } },
-                        y: { beginAtZero: true, ticks: { stepSize: 1, font: { family: 'Montserrat', size: 11 }, color: '#999' }, grid: { color: '#f4f4f8' } }
-                    }
-                }
-            });
+        const colors = ['#d82d6b','#009bb9','#181834']; let gc = null;
+        function buildGC(range) {
+            const labels = dailySeries[0].data.slice(-range).map(r => new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+            const datasets = dailySeries.map((s,i) => { const c = colors[i%colors.length]; return { label: displayName(s.plugin), data: s.data.slice(-range).map(r=>r.count), borderColor:c, borderWidth:2.5, pointBackgroundColor:c, pointRadius:3, pointHoverRadius:6, fill:i===0, backgroundColor:i===0?(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,'rgba(216,45,107,0.15)');g.addColorStop(1,'rgba(216,45,107,0)');return g;}:'transparent', tension:0.4 }; });
+            if (gc) gc.destroy();
+            gc = new Chart(document.getElementById('chart-global'),{ type:'line', data:{labels,datasets}, options:{ plugins:{legend:{display:dailySeries.length>1,labels:{font:{family:'Montserrat',size:11},boxWidth:12}}}, scales:{x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}},y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}}}}});
         }
-
-        buildGlobalChart(7);
-        document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                buildGlobalChart(parseInt(btn.dataset.range));
-            });
-        });
+        buildGC(7);
+        document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
     }
 }
 
 function pluginCardHtml(p) {
-    const pills = Object.entries(p.versions || {})
-        .map(([v, c]) => `<span class="version-pill">v${esc(v)}${c > 1 ? ' ×'+c : ''}</span>`)
-        .join('') || '<span class="version-pill">—</span>';
-    return `
-        <div class="plugin-card ${esc(p.status)}" data-name="${esc(p.name)}">
-            <div class="plugin-card-left">
-                <div class="plugin-card-top">
-                    ${dot(p.status, true)}
-                    <div class="plugin-card-name">${esc(displayName(p.name))}</div>
-                </div>
-                <div class="plugin-card-versions">${pills}</div>
-            </div>
-            <div class="plugin-card-right">
-                <div class="plugin-stat">
-                    <div class="plugin-stat-num">${p.total}</div>
-                    <div class="plugin-stat-label">Siti installati</div>
-                </div>
-                <div class="plugin-stat">
-                    <div class="plugin-stat-num online">${p.active}</div>
-                    <div class="plugin-stat-label">Plugin attivi</div>
-                </div>
-                <div class="plugin-stat">
-                    <div class="plugin-stat-num offline">${p.inactive}</div>
-                    <div class="plugin-stat-label">Nessun segnale</div>
-                </div>
-                <div class="plugin-card-arrow">›</div>
-            </div>
-        </div>`;
+    const pills = Object.entries(p.versions||{}).map(([v,c]) => `<span class="version-pill">v${esc(v)}${c>1?' ×'+c:''}</span>`).join('') || '<span class="version-pill">—</span>';
+    return `<div class="plugin-card ${esc(p.status)}" data-name="${esc(p.name)}">
+        <div class="plugin-card-left">
+            <div class="plugin-card-top">${dot(p.status,true)}<div class="plugin-card-name">${esc(displayName(p.name))}</div></div>
+            <div class="plugin-card-versions">${pills}</div>
+        </div>
+        <div class="plugin-card-right">
+            <div class="plugin-stat"><div class="plugin-stat-num">${p.total}</div><div class="plugin-stat-label">Siti installati</div></div>
+            <div class="plugin-stat"><div class="plugin-stat-num online">${p.active}</div><div class="plugin-stat-label">Plugin attivi</div></div>
+            <div class="plugin-stat"><div class="plugin-stat-num offline">${p.inactive}</div><div class="plugin-stat-label">Nessun segnale</div></div>
+            <div class="plugin-card-arrow">›</div>
+        </div>
+    </div>`;
 }
 
-// ─── VIEW: SITI CON ERRORI ────────────────────────────────────────────────────
+// ─── VIEW: ERRORI ─────────────────────────────────────────────────────────────
 async function loadErrors(silent = false) {
-    currentView = 'errors';
-    showView('errors');
-    setActiveNav('nav-errors');
-    setBreadcrumb([
-        { label: 'Home', onclick: loadPlugins },
-        { label: 'Siti con errori', active: true }
-    ]);
-    setHero('Monitoring', 'Siti con errori', []);
-
+    currentView = 'errors'; showView('errors'); setActiveNav('nav-errors');
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:'Siti con errori',active:true}]);
+    setHero('Monitoring','Siti con errori',[]);
     const el = document.getElementById('errors-container');
     if (!silent) el.innerHTML = loadingHtml();
 
-    const res = await fetch('/api/errors');
-    if (!res.ok) { el.innerHTML = errorHtml(); return; }
-    const data = await res.json();
+    const yesterday = new Date(Date.now() - 86400000);
+    const [{ data: errStats }, { data: allSites }] = await Promise.all([
+        _SB.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
+        _SB.from('mon_sites').select('*')
+    ]);
+    const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
+    const bysite = {};
+    (errStats||[]).forEach(e => { if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]}; bysite[e.site_id].errors.push(e); });
+    const data = Object.values(bysite);
 
     if (data.length === 0) {
-        el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>` +
-            emptyHtml('Nessun errore nelle ultime 24h', 'Tutto funziona correttamente.');
-        document.getElementById('back-err').addEventListener('click', loadPlugins);
-        return;
+        el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>` + emptyHtml('Nessun errore nelle ultime 24h','Tutto funziona correttamente.');
+        document.getElementById('back-err').addEventListener('click', loadPlugins); return;
     }
-
-    el.innerHTML = `
-        <button class="btn-back" id="back-err">← Torna alla home</button>
-        ${data.map(item => {
-            const s = item.site;
-            const errGroups = {};
-            (item.errors || []).forEach(e => {
-                const key = e.integration + ':' + (e.error_message || '');
-                errGroups[key] = (errGroups[key] || 0) + 1;
-            });
-            return `
-            <div class="card" style="margin-bottom:16px">
-                <div class="card-header">
-                    <div>
-                        <span class="card-title">${esc(s?.site_name || s?.site_id)}</span>
-                        <span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s?.site_url || '')}</span>
-                    </div>
-                    <button class="btn-detail" data-site="${esc(s?.site_id)}">Vedi dettaglio →</button>
-                </div>
-                <div style="padding:4px 0">
-                ${Object.entries(errGroups).map(([key, count]) => {
-                    const [integ, msg] = key.split(':');
-                    const integLabel = { supabase: 'Salvataggio DB', crm: 'CRM', amelia: 'Amelia' }[integ] || integ;
-                    return `<div class="log-item">
-                        <span class="log-level error">errore</span>
-                        <span class="log-message"><strong>${esc(integLabel)}</strong> — ${esc(msg || 'Errore sconosciuto')}</span>
-                        <span class="log-time">${count}× nelle ultime 24h</span>
-                    </div>`;
-                }).join('')}
-                </div>
-            </div>`;
-        }).join('')}
-    `;
-
+    el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>
+    ${data.map(item => {
+        const s = item.site; const eg = {};
+        (item.errors||[]).forEach(e => { const k = e.integration+':'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
+        return `<div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div><span class="card-title">${esc(s?.site_name||s?.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s?.site_url||'')}</span></div>
+                <button class="btn-detail" data-site="${esc(s?.site_id)}">Vedi dettaglio →</button>
+            </div>
+            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const [integ,msg]=k.split(':'); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
+        </div>`;
+    }).join('')}`;
     document.getElementById('back-err').addEventListener('click', loadPlugins);
-    el.querySelectorAll('.btn-detail').forEach(btn => {
-        btn.addEventListener('click', () => loadSiteDetail(btn.dataset.site));
-    });
+    el.querySelectorAll('.btn-detail').forEach(btn => btn.addEventListener('click', () => loadSiteDetail(btn.dataset.site)));
 }
 
 // ─── VIEW: SITI ───────────────────────────────────────────────────────────────
 async function loadSites(pluginName, silent = false) {
-    currentPlugin = pluginName;
-    currentView   = 'sites';
-    showView('sites');
-    setBreadcrumb([
-        { label: 'Home', onclick: loadPlugins },
-        { label: displayName(pluginName), active: true }
-    ]);
-
+    currentPlugin = pluginName; currentView = 'sites'; showView('sites');
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),active:true}]);
     const el = document.getElementById('sites-container');
     if (!silent) el.innerHTML = loadingHtml();
 
-    const res = await fetch(`/api/plugins/${encodeURIComponent(pluginName)}/sites`);
-    if (!res.ok) { el.innerHTML = errorHtml(); return; }
-    const sites = await res.json();
+    const yesterday = new Date(Date.now() - 86400000);
+    const { data: sites } = await _SB.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
+    updateLatestVersions(sites);
+    const siteIds = (sites||[]).map(s => s.site_id);
 
-    const active   = sites.filter(s => s.status === 'green').length;
-    const inactive = sites.filter(s => s.status !== 'green').length;
-
-    setHero(displayName(pluginName), displayName(pluginName), [
-        { num: sites.length, label: 'Siti installati' },
-        { num: active,       label: 'Plugin attivi' },
-        { num: inactive,     label: 'Senza segnale' }
-    ]);
-
-    if (sites.length === 0) {
-        el.innerHTML = emptyHtml('Nessuna installazione', 'Le installazioni appariranno quando i siti invieranno il primo segnale.');
-        return;
+    let lastEvents = [], recentStats = [];
+    if (siteIds.length > 0) {
+        const [le, rs] = await Promise.all([
+            _SB.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
+            _SB.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
+        ]);
+        lastEvents = le.data || [];
+        recentStats = rs.data || [];
     }
+
+    const lastReqMap = {};
+    lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
+    const integMap = {};
+    recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
+
+    const now = new Date();
+    const enriched = (sites||[]).map(s => {
+        const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
+        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{} };
+    });
+
+    const active = enriched.filter(s=>s.status==='green').length;
+    const inactive = enriched.filter(s=>s.status!=='green').length;
+    setHero(displayName(pluginName), displayName(pluginName), [{num:enriched.length,label:'Siti installati'},{num:active,label:'Plugin attivi'},{num:inactive,label:'Senza segnale'}]);
+
+    if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header">
-                <span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span>
-                <span style="font-size:12px;color:var(--grey)">${sites.length} siti</span>
-            </div>
-            <table class="sites-table">
-                <thead><tr>
-                    <th>Stato</th><th>Sito</th><th>Ultima richiesta</th>
-                    <th>Supabase / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th></th>
-                </tr></thead>
-                <tbody>${sites.map(siteRowHtml).join('')}</tbody>
-            </table>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
-    el.querySelectorAll('tr[data-site-id]').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.closest('.btn-ping')) return;
-            loadSiteDetail(row.dataset.siteId);
+
+    const btnUpdateAll = document.getElementById('btn-update-all');
+    if (btnUpdateAll) {
+        btnUpdateAll.addEventListener('click', async () => {
+            const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
+            if (!outdatedBtns.length) return;
+            if (!confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`)) return;
+            btnUpdateAll.textContent = 'Aggiornamento in corso...';
+            btnUpdateAll.disabled = true;
+            for (const btn of outdatedBtns) {
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true);
+            }
+            btnUpdateAll.textContent = 'Tutti aggiornati!';
+            setTimeout(() => loadSites(currentPlugin), 3000);
+        });
+    }
+
+    el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping') || e.target.closest('.btn-update-row')) return; loadSiteDetail(row.dataset.siteId); }); });
+    el.querySelectorAll('.btn-update-row').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            if (btn.dataset.outdated !== '1') {
+                alert('✓ Ultima versione già installata.');
+                return;
+            }
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
         });
     });
     el.querySelectorAll('.btn-ping').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
+        btn.addEventListener('click', async e => {
             e.stopPropagation();
-            const siteId = btn.dataset.site;
             const name   = btn.dataset.name;
-            btn.textContent = '...';
-            btn.disabled = true;
-            try {
-                const res = await fetch(`/api/ping/${encodeURIComponent(siteId)}`);
-                const d   = await res.json();
-                showPingResult(name, d);
-            } catch { showPingResult(name, null); }
+            const siteUrl = btn.dataset.url;
+            const apiKey  = btn.dataset.apikey;
+            btn.textContent = '...'; btn.disabled = true;
+            try { const d = await pingLive(siteUrl, apiKey); showPingResult(name, d); }
+            catch { showPingResult(name, null); }
             finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
         });
     });
@@ -418,500 +391,454 @@ async function loadSites(pluginName, silent = false) {
 
 function siteRowHtml(s) {
     const integ = s.last_integ || {};
-    const dotFor = (key) => {
-        const st = integ[key];
-        if (st === undefined || st === null || st === 'disabled') {
-            return `<span class="integ-dot grey" title="${key}: non configurato"></span>`;
-        }
-        if (st === 'ok')      return `<span class="integ-dot dot-ok"      title="${key}: ok — dati salvati"></span>`;
-        if (st === 'error')   return `<span class="integ-dot dot-error"   title="${key}: errore"></span>`;
-        if (st === 'info')    return `<span class="integ-dot dot-info"    title="${key}: già presente"></span>`;
-        if (st === 'skipped') return `<span class="integ-dot dot-skipped" title="${key}: saltato"></span>`;
-        return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`;
-    };
-    const crmBadge = s.has_crm ? '' : `<span class="no-crm-badge">CRM non collegato</span>`;
-    const ft = (val) => val !== false && val !== 0 && val !== null && val !== undefined;
-    const fStat = ft(s.feature_stats);
-    const fCrm  = ft(s.feature_crm_tab);
-    const fSet  = ft(s.feature_settings_tab);
-    const anyOff = !fStat || !fCrm || !fSet;
-    const featureCell = anyOff
-        ? `<div style="display:flex;flex-direction:column;gap:2px;font-size:11px">
-            ${!fStat ? '<span style="color:#ef4444;font-weight:600">Statistiche OFF</span>' : ''}
-            ${!fCrm  ? '<span style="color:#ef4444;font-weight:600">CRM OFF</span>' : ''}
-            ${!fSet  ? '<span style="color:#ef4444;font-weight:600">Impostazioni OFF</span>' : ''}
-           </div>`
-        : `<span style="font-size:11px;color:#bbb">—</span>`;
-    return `
-        <tr data-site-id="${esc(s.site_id)}">
-            <td>${dot(s.status)}</td>
-            <td>
-                <div class="site-name-cell">${esc(s.site_name || s.site_url || s.site_id)}</div>
-                <div class="site-url-cell">${esc(s.site_url || '')} ${crmBadge}</div>
-            </td>
-            <td style="font-size:12px;color:var(--grey)">${s.last_request ? timeAgo(s.last_request) : '—'}</td>
-            <td>
-                <div class="integ-dots-row">
-                    <span class="integ-dots-label">Supabase</span>${dotFor('supabase')}
-                    <span class="integ-dots-label">CRM</span>${dotFor('crm')}
-                    <span class="integ-dots-label">Amelia</span>${dotFor('amelia')}
-                </div>
-            </td>
-            <td>${featureCell}</td>
-            <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version || '—')}</td>
-            <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
-            <td>
-                <button class="btn-ping" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name || s.site_id)}">
-                    Testa ora
-                </button>
-            </td>
-        </tr>`;
+    const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
+    const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
+    return `<tr data-site-id="${esc(s.site_id)}">
+        <td>${dot(s.status)}</td>
+        <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
+        <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
+        <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
+        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Stats');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:#ef4444;font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:#bbb">—</span>';})()}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
+        <td style="display:flex;gap:6px;align-items:center">
+            <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+        </td>
+    </tr>`;
 }
 
 // ─── VIEW: DETTAGLIO SITO ─────────────────────────────────────────────────────
 async function loadSiteDetail(siteId, silent = false) {
-    currentSite = siteId;
-    currentView = 'site';
-    showView('site');
-
+    currentSite = siteId; currentView = 'site'; showView('site');
     const el = document.getElementById('site-container');
     if (!silent) el.innerHTML = loadingHtml();
 
-    const res = await fetch(`/api/sites/${encodeURIComponent(siteId)}`);
-    if (!res.ok) { el.innerHTML = errorHtml(); return; }
-    const d = await res.json();
+    const now = new Date();
+    const yesterday = new Date(now - 86400000);
+    const weekAgo   = new Date(now - 7  * 86400000);
+    const thirtyAgo = new Date(now - 30 * 86400000);
 
-    const siteName   = d.site.site_name || d.site.site_url || siteId;
-    const pluginName = d.site.plugin_name;
+    const { data: site, error: se } = await _SB.from('mon_sites').select('*').eq('site_id', siteId).single();
+    if (se) { el.innerHTML = errorHtml(); return; }
 
-    setBreadcrumb([
-        { label: 'Home',                  onclick: loadPlugins },
-        { label: displayName(pluginName), onclick: () => loadSites(pluginName) },
-        { label: siteName,                active: true }
+    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }] = await Promise.all([
+        _SB.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
+        _SB.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()),
+        _SB.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
+        _SB.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
+        _SB.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()),
+        _SB.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
     ]);
-    setHero(displayName(pluginName), siteName, [
-        { num: d.total_submissions, label: 'Richieste totali' },
-        { num: d.events_week,       label: 'Ultimi 7 giorni' }
-    ]);
 
-    const integLabels = { supabase: 'Supabase (salvataggio dati)', crm: 'CRM (invio contatto)', amelia: 'Amelia (prenotazione)' };
+    const dailyCounts = {};
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); dailyCounts[d.toISOString().slice(0,10)]=0; }
+    (allEvents||[]).forEach(e => { const day=e.created_at.slice(0,10); if(dailyCounts[day]!==undefined) dailyCounts[day]++; });
 
-    const suggestionsHtml = (d.suggestions || []).length > 0 ? `
-        <div class="card">
-            <div class="card-header"><span class="card-title">Cosa fare</span></div>
-            ${d.suggestions.map(s => `
-            <div class="suggestion-item ${esc(s.level)}">
-                <div class="suggestion-title">${esc(s.title)}</div>
-                <div class="suggestion-action">${esc(s.action)}</div>
-            </div>`).join('')}
-        </div>` : '';
+    const trendDays = {};
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
 
-    const versionHtml = d.version ? `
-        <div class="version-row">
-            <span>Versione installata: <strong>${esc(d.version.installed)}</strong></span>
-            ${d.version.ok
-                ? `<span class="version-badge ok">Aggiornato</span>`
-                : `<span class="version-badge warn">Aggiornamento disponibile: v${esc(d.version.latest)}</span>`}
-        </div>` : '';
+    (intTrends||[]).forEach(raw => {
+        let s = normalizeRecord(raw);
+        // CRM error senza messaggio = CRM esterno (hotel_id), non è un vero errore
+        if (s.integration === 'crm' && s.status === 'error' && !s.error_message) s = {...s, status:'skipped'};
+        const day=s.created_at.slice(0,10);
+        if(trendDays[day]&&trendDays[day][s.integration]){
+            trendDays[day][s.integration].tot++;
+            // Amelia: solo 'ok' conta (info=duplicato, skipped=altro 4xx non entrano nel conteggio)
+            // Supabase/CRM: ok + info + skipped tutti contano
+            const isOk = s.integration==='amelia'
+                ? s.status==='ok'
+                : (s.status==='ok'||s.status==='info'||s.status==='skipped');
+            if(isOk) trendDays[day][s.integration].ok++;
+        }
+    });
+    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
+
+    const integrationStatus = {};
+    ['supabase','crm','amelia'].forEach(integ => {
+        let stats = (intStats||[]).filter(s=>s.integration===integ)
+            .filter(s => isValidRecord(s, integ))
+            .map(normalizeRecord)
+            .map(s => (integ==='crm' && s.status==='error' && !s.error_message) ? {...s,status:'skipped'} : s);
+        const configured = !!site['has_' + integ];
+        if (!stats.length) {
+            // CRM configurato ma senza invii tracciati (gestito esternamente) → verde
+            integrationStatus[integ]={status:(integ==='crm'&&configured)?'green':'grey',ok:0,total:0,rate:null,last_error:null,configured};
+            return;
+        }
+        const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
+        const rate = ok/stats.length;
+        // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
+        const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
+        integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
+    });
+
+    const hrs = site.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
+    const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
+    const allStatuses = [heartbeatStatus,...Object.values(integrationStatus).map(i=>i.status)].filter(s=>s!=='grey');
+    const overallStatus = allStatuses.includes('red')?'red':allStatuses.includes('yellow')?'yellow':'green';
+
+    const li            = latestInfo(site.plugin_name);
+    const latestVersion = li ? li.version : null;
+    const latestDownloadUrl = li ? li.download_url : null;
+    const versionOk = !latestVersion || !semverGt(latestVersion, site.plugin_version);
+
+    const allMessages = (logs||[]).map(l=>l.message||'');
+    const suggestions = [];
+    if (allMessages.some(m=>m.includes('BAD_CONTACT_MSISDN'))) suggestions.push({level:'error',title:'Numero di telefono non valido (Amelia)',action:'Amelia rifiuta il numero perché non è nel formato internazionale. Usa il campo telefono con validazione attiva.'});
+    if (allMessages.some(m=>m.includes('PGRST204'))) suggestions.push({level:'error',title:'Colonna mancante in Supabase',action:'Il form cerca una colonna che non esiste. Verifica i nomi delle colonne nelle impostazioni del form → Supabase.'});
+    if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:site.api_key&&latestDownloadUrl?`Usa il pulsante "Aggiorna ora" in Informazioni sito.`:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
+
+    const siteName   = site.site_name || site.site_url || siteId;
+    const pluginName = site.plugin_name;
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
+    setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
+
+    const integLabels = {supabase:'Supabase',crm:'CRM',amelia:'Amelia'};
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
-
-        ${suggestionsHtml}
-
+        ${suggestions.length>0?`<div class="card">${suggestions.map(s=>`<div class="suggestion-item ${esc(s.level)}"><div class="suggestion-title">${esc(s.title)}</div><div class="suggestion-action">${esc(s.action)}</div></div>`).join('')}</div>`:''}
         <div class="detail-grid">
             <div class="card">
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
-                <div class="semaforo-general">
-                    ${dot(d.overall_status, true)}
-                    <span>Stato generale: <strong>${statusLabel(d.overall_status)}</strong></span>
-                </div>
-                <div class="semaforo-row">
-                    ${dot(d.heartbeat.status)}
-                    <span class="semaforo-label">Plugin attivo sul sito <span style="font-weight:400;color:var(--grey);font-size:11px">(verifica automatica ogni ora)</span></span>
-                    <span class="semaforo-detail">Ultima verifica: ${timeAgo(d.heartbeat.last_heartbeat)}</span>
-                </div>
-                ${Object.entries(d.integrations).map(([key, v]) => `
-                <div class="semaforo-row">
-                    ${dot(v.status)}
-                    <span class="semaforo-label">${integLabels[key] || key}</span>
-                    <span class="semaforo-detail">${v.total > 0
-                        ? `${v.ok}/${v.total} ok (${v.rate}%)${v.last_error ? ' — ' + v.last_error.substring(0,40) : ''}`
-                        : 'Nessun dato nelle ultime 24h'}</span>
-                </div>`).join('')}
+                <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
+                <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
-
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
-                ${versionHtml ? `<div style="padding:12px 26px 0">${versionHtml}</div>` : ''}
+                ${latestVersion&&!versionOk?`<div style="padding:12px 26px 0"><div class="version-row"><span>Versione installata: <strong>${esc(site.plugin_version)}</strong></span><span class="version-badge warn">Disponibile: v${esc(latestVersion)}</span>${site.api_key&&latestDownloadUrl?`<button class="btn-update" id="btn-do-update">Aggiorna ora</button>`:''}</div></div>`:''}
                 <div class="info-grid">
-                    ${infoRow('Sito',          d.site.site_name)}
-                    ${infoRow('URL',           d.site.site_url)}
-                    ${infoRow('Plugin ver.',   d.site.plugin_version)}
-                    ${infoRow('WordPress',     d.site.wp_version)}
-                    ${infoRow('PHP',           d.site.php_version)}
-                    ${infoRow('Tema attivo',   d.site.theme_active)}
-                    ${infoRow('Installato il', fmtDate(d.site.first_seen))}
-                    ${infoRow('Site ID',       d.site.site_id, true)}
+                    ${infoRow('Sito',site.site_name)}${infoRow('URL',site.site_url)}${infoRow('Plugin ver.',site.plugin_version)}${infoRow('WordPress',site.wp_version)}${infoRow('PHP',site.php_version)}${infoRow('Tema attivo',site.theme_active)}${infoRow('Installato il',fmtDate(site.first_seen))}${infoRow('Site ID',site.site_id,true)}
                 </div>
             </div>
         </div>
-
+        <div class="card">
+            <div class="card-header"><span class="card-title">Richieste ricevute giorno per giorno</span>
+            <div class="chart-toggle" id="sub-toggle"><button class="chart-toggle-btn active" data-range="7">7 giorni</button><button class="chart-toggle-btn" data-range="30">30 giorni</button></div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-submissions" height="80"></canvas></div>
+        </div>
+        ${(()=>{
+            const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
+            if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
+            const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=row.integ==='amelia'?'ok':r.rate===100?'ok':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+        })()}
+        <div class="stat-cards-row">
+            <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
+            <div class="stat-big-card cyan"><div class="stat-big-num">${events?.length||0}</div><div class="stat-big-label">Richieste negli ultimi 7 giorni</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
+        </div>
         <div class="card" id="card-features">
             <div class="card-header"><span class="card-title">Funzionalità</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
-                    { key: 'if2_feature_stats',        label: 'Statistiche',   enabled: d.features?.stats        !== false },
-                    { key: 'if2_feature_crm_tab',      label: 'CRM',           enabled: d.features?.crm_tab      !== false },
-                    { key: 'if2_feature_settings_tab', label: 'Impostazioni',  enabled: d.features?.settings_tab !== false },
-                ].map(f => `
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8">
-                    <span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span>
-                    <div style="display:flex;align-items:center;gap:14px">
-                        <span style="font-size:.78rem;font-weight:700;color:${f.enabled ? '#22c55e' : '#ef4444'}">${f.enabled ? 'Attiva' : 'Disattivata'}</span>
-                        <button class="btn-feature-toggle"
-                            data-key="${esc(f.key)}"
-                            data-value="${f.enabled ? 0 : 1}"
-                            style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${f.enabled ? '#ef4444' : '#22c55e'};background:transparent;color:${f.enabled ? '#ef4444' : '#22c55e'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">
-                            ${f.enabled ? 'Disattiva' : 'Attiva'}
-                        </button>
-                    </div>
-                </div>`).join('')}
+                    {key:'if2_feature_stats',        label:'Statistiche',   val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'CRM',           val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni',  val:site.feature_settings_tab},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'#22c55e':'#ef4444'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'#ef4444':'#22c55e'};background:transparent;color:${on?'#ef4444':'#22c55e'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
             </div>
         </div>
-
         <div class="card">
-            <div class="card-header">
-                <span class="card-title">Richieste ricevute giorno per giorno</span>
-                <div class="chart-toggle" id="sub-toggle">
-                    <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
-                    <button class="chart-toggle-btn" data-range="30">30 giorni</button>
-                </div>
-            </div>
-            <div style="padding:20px 26px 24px">
-                <canvas id="chart-submissions" height="80"></canvas>
-            </div>
-        </div>
-
-        ${(()=>{
-            const integRows = ['supabase','crm','amelia'].map(integ => {
-                const trend = (d.integration_trends || []).find(t => t.integration === integ);
-                if (!trend) return null;
-                return { integ, label: {supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ], data: trend.data.slice(-14) };
-            }).filter(Boolean);
-            const hasAnyData = integRows.some(r => r.data.some(x => x.rate !== null));
-            if (!hasAnyData) return '';
-            const dateLabels = integRows[0].data.map(r =>
-                new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'})
-            );
-            return `<div class="card">
-                <div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div>
-                <div style="padding:16px 26px 20px;overflow-x:auto">
-                    <table class="heatmap-table">
-                        <thead><tr>
-                            <th></th>
-                            ${dateLabels.map(l=>`<th>${l}</th>`).join('')}
-                        </tr></thead>
-                        <tbody>
-                        ${integRows.map(row=>`<tr>
-                            <td class="heatmap-row-label">${row.label}</td>
-                            ${row.data.map(r=>{
-                                if (r.rate===null) return `<td><span class="heatmap-cell empty" title="Nessun dato">—</span></td>`;
-                                const cls = r.rate===100?'ok':r.rate>=80?'warn':'err';
-                                return `<td><span class="heatmap-cell ${cls}" title="${r.date}: ${r.rate}%">${r.rate}%</span></td>`;
-                            }).join('')}
-                        </tr>`).join('')}
-                        </tbody>
-                    </table>
-                    <div class="heatmap-legend" style="margin-top:14px">
-                        <span class="heatmap-cell ok" style="padding:2px 8px">100%</span> Tutto ok
-                        <span class="heatmap-cell warn" style="margin-left:14px;padding:2px 8px">80%+</span> Qualche errore
-                        <span class="heatmap-cell err" style="margin-left:14px;padding:2px 8px">&lt;80%</span> Molti errori
-                    </div>
-                </div>
-            </div>`;
-        })()}
-
-        <div class="stat-cards-row">
-            <div class="stat-big-card magenta">
-                <div class="stat-big-num">${d.total_submissions}</div>
-                <div class="stat-big-label">Richieste ricevute in totale</div>
-            </div>
-            <div class="stat-big-card cyan">
-                <div class="stat-big-num">${d.events_week}</div>
-                <div class="stat-big-label">Richieste negli ultimi 7 giorni</div>
-            </div>
-            <div class="stat-big-card">
-                <div class="stat-big-num">${rateLabel(d.integrations.supabase)}</div>
-                <div class="stat-big-label">Salvataggio DB (ultime 24h)</div>
-            </div>
-            <div class="stat-big-card">
-                <div class="stat-big-num">${rateLabel(d.integrations.crm)}</div>
-                <div class="stat-big-label">Invio CRM (ultime 24h)</div>
-            </div>
-            <div class="stat-big-card">
-                <div class="stat-big-num">${rateLabel(d.integrations.amelia)}</div>
-                <div class="stat-big-label">Amelia (ultime 24h)</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">Log recenti</span>
-                <span style="font-size:12px;color:var(--grey)">Ultimi 20</span>
-            </div>
-            ${d.logs.length > 0
-                ? '<div>' + d.logs.map(logRowHtml).join('') + '</div>'
-                : emptyHtml('Nessun log', 'Nessun errore registrato.')}
+            <div class="card-header"><span class="card-title">Log recenti</span><span style="font-size:12px;color:var(--grey)">Ultimi 20</span></div>
+            ${logs?.length>0?'<div>'+logs.map(logRowHtml).join('')+'</div>':emptyHtml('Nessun log','Nessun errore registrato.')}
         </div>`;
 
     document.getElementById('back-to-sites').addEventListener('click', () => loadSites(pluginName));
 
-    // Feature flags toggles
-    el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
+    const btnDoUpdate = document.getElementById('btn-do-update');
+    if (btnDoUpdate) {
+        btnDoUpdate.addEventListener('click', () => updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate));
+    }
+
+    el.querySelectorAll('.btn-enable-crm').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const key   = btn.dataset.key;
-            const value = parseInt(btn.dataset.value);
-            btn.disabled = true;
-            btn.textContent = '...';
+            btn.textContent = 'Attivazione...'; btn.disabled = true;
             try {
-                await fetch(`/api/sites/${encodeURIComponent(siteId)}/features`, {
+                const resp = await fetch(btn.dataset.url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key, value }),
+                    body: JSON.stringify({ api_key: btn.dataset.apikey, key: 'if2_has_crm_override', value: 1 }),
                 });
-                loadSiteDetail(siteId);
-            } catch {
-                btn.disabled = false;
-                btn.textContent = value === 1 ? 'Attiva' : 'Disattiva';
-            }
+                const json = await resp.json().catch(() => ({}));
+                if (resp.ok && json.success) {
+                    btn.textContent = 'CRM attivato!';
+                    btn.style.background = 'var(--cyan)';
+                    setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
+                } else {
+                    btn.textContent = 'Errore'; btn.disabled = false;
+                }
+            } catch { btn.textContent = 'Errore connessione'; btn.disabled = false; }
         });
     });
 
-    // Grafico richieste
-    if (d.daily_submissions?.length > 0) {
-        buildLineChart('chart-submissions', 'sub-toggle', [{ color: '#d82d6b', data: d.daily_submissions, fill: true }], 7);
-    }
+    el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true; btn.textContent = '...';
+            const key   = btn.dataset.key;
+            const value = parseInt(btn.dataset.value);
+            const sid   = btn.dataset.site;
+            const url   = btn.dataset.url;
+            const apiKey = btn.dataset.apikey;
+            try {
+                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
+                if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
+                if (url && apiKey) {
+                    await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: apiKey, key, value }),
+                    }).catch(()=>{});
+                }
+                setTimeout(() => loadSiteDetail(sid), 800);
+            } catch { btn.disabled = false; btn.textContent = 'Errore'; }
+        });
+    });
 
-    // Grafico integrazioni
-    if (d.integration_trends?.length > 0) {
-        const integColors = { supabase: '#d82d6b', crm: '#009bb9', amelia: '#181834' };
-        const integSeries = d.integration_trends.map(t => ({
-            label: integLabels[t.integration] || t.integration,
-            color: integColors[t.integration] || '#999',
-            data: t.data.map(r => ({ date: r.date, count: r.rate })),
-            fill: false
-        }));
-        buildLineChart('chart-integrations', 'integ-toggle', integSeries, 7, '%');
+    const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
+    if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
+}
+
+// ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
+    if (!skipConfirm && !confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
+    btn.textContent = 'Aggiornamento in corso...';
+    btn.disabled = true;
+    try {
+        const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, download_url: downloadUrl }),
+        });
+        let json = {};
+        try { json = await resp.json(); } catch {}
+        if (resp.ok && json.success) {
+            btn.textContent = 'Aggiornato!';
+            btn.style.background = 'var(--cyan)';
+            btn.style.color = 'white';
+            // Pinga il sito dopo 2s: questo carica il nuovo codice PHP e triggera
+            // il heartbeat con la versione corretta. Poi ricarica dopo altri 3s.
+            setTimeout(async () => {
+                try { await pingLive(siteUrl, apiKey); } catch {}
+                setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
+            }, 2000);
+        } else {
+            btn.textContent = 'Errore — riprova';
+            btn.style.background = 'var(--red, #ef4444)';
+            btn.style.color = 'white';
+            alert('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
+            setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
+        }
+    } catch (e) {
+        btn.textContent = 'Errore connessione';
+        btn.style.background = 'var(--red, #ef4444)';
+        btn.style.color = 'white';
+        alert('Impossibile contattare il sito:\n' + e.message);
+        setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
     }
 }
 
-// ─── PING MODAL ───────────────────────────────────────────────────────────────
+// ─── PING LIVE ────────────────────────────────────────────────────────────────
+async function pingLive(siteUrl, apiKey) {
+    const now = new Date();
+    if (!siteUrl) throw new Error('URL mancante');
+    const base = siteUrl.replace(/\/$/, '');
+    const endpoint = base + '/wp-json/if2/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const resp = await fetch(endpoint, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!resp.ok) return { reachable: false, status: resp.status, checked_at: now.toISOString() };
+        const json = await resp.json();
+        return { reachable: true, plugin_version: json.plugin_version, wp_version: json.wp_version, php_version: json.php_version, checked_at: now.toISOString() };
+    } catch(e) {
+        clearTimeout(timeout);
+        throw e;
+    }
+}
+
 function showPingResult(name, d) {
     document.getElementById('ping-modal')?.remove();
-    const integLabels = { supabase: 'Salvataggio DB', crm: 'Invio CRM', amelia: 'Amelia' };
-    const rows = d ? Object.entries(d.integ_counts || {}).map(([k, v]) => {
-        const rate = v.total > 0 ? Math.round(v.ok / v.total * 100) : null;
-        const cls  = rate === null ? 'grey' : rate === 100 ? 'green' : rate >= 80 ? 'yellow' : 'red';
-        return `<div class="ping-row">
-            ${dot(cls)}
-            <span>${integLabels[k] || k}</span>
-            <span style="margin-left:auto;font-weight:700">${rate !== null ? rate + '%' : '—'}</span>
-            <span style="font-size:11px;color:var(--grey)">${v.ok}/${v.total} ok nelle ultime 24h</span>
-        </div>`;
-    }).join('') : '';
-
     const modal = document.createElement('div');
-    modal.id = 'ping-modal';
-    modal.className = 'ping-overlay';
-    modal.innerHTML = `
-        <div class="ping-card">
-            <div class="ping-header">
-                <span class="ping-title">${esc(name)}</span>
-                <button class="ping-close" id="ping-close">✕</button>
-            </div>
-            ${!d ? `<div style="padding:20px;color:var(--grey)">Errore nel recupero dati.</div>` : `
-            <div class="ping-row" style="border-bottom:1px solid #f4f4f8;padding-bottom:12px;margin-bottom:4px">
-                ${dot(d.plugin_active ? 'green' : 'red')}
-                <span>Plugin ${d.plugin_active ? 'attivo' : 'non risponde'}</span>
-                <span style="margin-left:auto;font-size:12px;color:var(--grey)">
-                    Ultimo segnale: ${d.last_heartbeat ? timeAgo(d.last_heartbeat) : '—'}
-                </span>
-            </div>
-            <div class="ping-row" style="margin-bottom:12px">
-                <span style="font-size:12px;color:var(--grey)">Ultima richiesta ricevuta:</span>
-                <span style="margin-left:auto;font-weight:700;font-size:13px">${d.last_request ? timeAgo(d.last_request) : 'Mai'}</span>
-            </div>
-            ${rows}
-            <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">
-                Verificato ${timeAgo(d.checked_at)}
-            </div>`}
-        </div>`;
+    modal.id = 'ping-modal'; modal.className = 'ping-overlay';
+    let body = '';
+    if (!d) {
+        body = `<div style="padding:20px;color:var(--grey)">Sito non raggiungibile o timeout.</div>`;
+    } else if (!d.reachable) {
+        body = `<div class="ping-row">${dot('red')}<span>Sito non risponde</span><span style="margin-left:auto;font-size:12px;color:var(--grey)">HTTP ${d.status||'—'}</span></div><div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    } else {
+        body = `
+        <div class="ping-row" style="border-bottom:1px solid #f4f4f8;padding-bottom:12px;margin-bottom:12px">
+            ${dot('green')}<span style="font-weight:700">Plugin attivo e raggiungibile</span>
+        </div>
+        <div class="ping-row"><span style="color:var(--grey)">Versione plugin</span><span style="margin-left:auto;font-weight:700">${esc(d.plugin_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">WordPress</span><span style="margin-left:auto;font-weight:700">${esc(d.wp_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">PHP</span><span style="margin-left:auto;font-weight:700">${esc(d.php_version||'—')}</span></div>
+        <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    }
+    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div>${body}</div>`;
     document.body.appendChild(modal);
-    document.getElementById('ping-close').addEventListener('click', () => modal.remove());
-    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    document.getElementById('ping-close').addEventListener('click', ()=>modal.remove());
+    modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
 }
 
-// ─── GRAFICO LINEE (riusabile) ────────────────────────────────────────────────
-function buildLineChart(canvasId, toggleId, series, defaultRange, unit = '') {
+// ─── GRAFICO LINEE ────────────────────────────────────────────────────────────
+function buildLineChart(canvasId, toggleId, series, defaultRange, unit='') {
     let chart = null;
     function build(range) {
-        const labels = series[0].data.slice(-range).map(r =>
-            new Date(r.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
-        );
-        const datasets = series.map(s => ({
-            label: s.label || '',
-            data: s.data.slice(-range).map(r => r.count),
-            borderColor: s.color,
-            borderWidth: 2.5,
-            pointBackgroundColor: s.color,
-            pointRadius: 3,
-            pointHoverRadius: 6,
-            fill: s.fill || false,
-            backgroundColor: s.fill ? (ctx) => {
-                const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-                g.addColorStop(0, s.color + '28');
-                g.addColorStop(1, s.color + '00');
-                return g;
-            } : 'transparent',
-            tension: 0.4,
-            spanGaps: true,
-        }));
+        const labels = series[0].data.slice(-range).map(r => new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+        const datasets = series.map(s => ({ label:s.label||'', data:s.data.slice(-range).map(r=>r.count), borderColor:s.color, borderWidth:2.5, pointBackgroundColor:s.color, pointRadius:3, pointHoverRadius:6, fill:s.fill||false, backgroundColor:s.fill?(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,s.color+'28');g.addColorStop(1,s.color+'00');return g;}:'transparent', tension:0.4, spanGaps:true }));
         if (chart) chart.destroy();
-        chart = new Chart(document.getElementById(canvasId), {
-            type: 'line',
-            data: { labels, datasets },
-            options: {
-                plugins: {
-                    legend: { display: series.length > 1, labels: { font: { family: 'Montserrat', size: 11 }, boxWidth: 12 } },
-                    tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}${unit}` } }
-                },
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { family: 'Montserrat', size: 10 }, maxTicksLimit: 10, color: '#999' } },
-                    y: { beginAtZero: true, ticks: { font: { family: 'Montserrat', size: 11 }, color: '#999', callback: v => v + unit }, grid: { color: '#f4f4f8' } }
-                }
-            }
-        });
+        chart = new Chart(document.getElementById(canvasId),{ type:'line', data:{labels,datasets}, options:{ plugins:{legend:{display:series.length>1,labels:{font:{family:'Montserrat',size:11},boxWidth:12}},tooltip:{callbacks:{label:ctx=>` ${ctx.parsed.y}${unit}`}}}, scales:{x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}},y:{beginAtZero:true,ticks:{font:{family:'Montserrat',size:11},color:'#999',callback:v=>v+unit},grid:{color:'#f4f4f8'}}}}});
     }
     build(defaultRange);
-    document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            build(parseInt(btn.dataset.range));
-        });
-    });
+    document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(b=>b.classList.remove('active')); btn.classList.add('active'); build(parseInt(btn.dataset.range)); }); });
 }
 
-// ─── LOG ROW ──────────────────────────────────────────────────────────────────
 function logRowHtml(log) {
-    return `<div class="log-item">
-        <span class="log-level ${esc(log.level)}">${esc(log.level)}</span>
-        <span class="log-message">${esc(log.message)}</span>
-        <span class="log-time">${timeAgo(log.created_at)}</span>
-    </div>`;
+    return `<div class="log-item"><span class="log-level ${esc(log.level)}">${esc(log.level)}</span><span class="log-message">${esc(log.message)}</span><span class="log-time">${timeAgo(log.created_at)}</span></div>`;
 }
 
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
-function showView(view) {
-    ['plugins', 'sites', 'site', 'errors'].forEach(v =>
-        document.getElementById(`view-${v}`).style.display = v === view ? '' : 'none'
-    );
-}
-
+function showView(view) { ['plugins','sites','site','errors','users'].forEach(v => document.getElementById(`view-${v}`).style.display = v===view?'':'none'); }
 function setHero(label, title, stats) {
     document.getElementById('hero-label').textContent = label;
     document.getElementById('hero-title').textContent = title;
     const el = document.getElementById('sw-stats');
-    if (stats && stats.length > 0) {
-        el.style.display = '';
-        const colors = ['var(--magenta)', 'var(--cyan)', 'var(--dark)'];
-        el.innerHTML = stats.map((s, i) => `
-            <div class="sw-stat-card" ${s.clickable ? `data-action="${esc(s.action)}"` : ''}>
-                <div class="sw-stat-icon" style="background:${colors[i % colors.length]}">${s.num}</div>
-                <div class="sw-stat-text">
-                    <div class="sw-stat-num">${s.num}</div>
-                    <div class="sw-stat-label">${s.label}</div>
-                </div>
-            </div>`).join('');
-    } else {
-        el.style.display = 'none';
-    }
+    if (stats&&stats.length>0) { el.style.display=''; const colors=['var(--magenta)','var(--cyan)','var(--dark)']; el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" ${s.clickable?`data-action="${esc(s.action)}"`:''}>  <div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join(''); }
+    else el.style.display='none';
 }
-
 function setBreadcrumb(items) {
     const el = document.getElementById('breadcrumb');
-    el.innerHTML = items.map((item, i) => {
-        const sep = i > 0 ? '<span class="breadcrumb-sep">›</span>' : '';
-        const cls = item.active ? 'breadcrumb-item active' : 'breadcrumb-item';
-        return `${sep}<span class="${cls}" data-i="${i}">${esc(item.label)}</span>`;
-    }).join('');
-    items.forEach((item, i) => {
-        if (item.onclick) {
-            const node = el.querySelector(`[data-i="${i}"]`);
-            if (node) node.addEventListener('click', item.onclick);
-        }
+    el.innerHTML = items.map((item,i) => { const sep = i>0?'<span class="breadcrumb-sep">›</span>':''; const cls = item.active?'breadcrumb-item active':'breadcrumb-item'; return `${sep}<span class="${cls}" data-i="${i}">${esc(item.label)}</span>`; }).join('');
+    items.forEach((item,i) => { if (item.onclick) { const n=el.querySelector(`[data-i="${i}"]`); if(n) n.addEventListener('click',item.onclick); } });
+}
+function infoRow(label, value, small=false) { return `<div class="info-row"><div class="info-label">${esc(label)}</div><div class="info-value"${small?' style="font-size:11px;color:var(--grey)"':''}>${esc(value||'—')}</div></div>`; }
+function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
+
+function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
+function dot(status, lg=false) { return `<span class="dot${lg?' lg':''} ${esc(status)}"></span>`; }
+function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
+function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
+function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
+function esc(str) { if(str===null||str===undefined)return''; return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function loadingHtml() { return '<div class="loading"><div class="spinner"></div> Caricamento...</div>'; }
+function errorHtml()   { return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>'; }
+function emptyHtml(title, sub) { return `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`; }
+
+// ─── VISTA UTENTI (admin only) ────────────────────────────────────────────────
+let _usersCache = [];
+
+async function loadUsers() {
+    if (currentProfile?.role !== 'admin') return;
+    currentView = 'users'; showView('users'); setActiveNav('nav-users');
+    setBreadcrumb([{label:'Utenti', active:true}]);
+    setHero('Utenti', 'Gestione accessi');
+
+    const el = document.getElementById('users-container');
+    el.innerHTML = loadingHtml();
+
+    const { data: users, error } = await _SB.from('mon_profiles').select('*').order('created_at', {ascending:false});
+    if (error || !users) { el.innerHTML = errorHtml(); return; }
+    _usersCache = users;
+    renderUsers(users);
+}
+
+function renderUsers(users) {
+    const el = document.getElementById('users-container');
+    el.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">${users.length} account registrati</span>
+                <input type="text" id="user-search" class="search-input" placeholder="🔍 Cerca utente...">
+            </div>
+            <table class="sites-table">
+                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Registrato</th><th>Azioni</th></tr></thead>
+                <tbody>${users.map(userRowHtml).join('')}</tbody>
+            </table>
+        </div>`;
+
+    document.getElementById('user-search').addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('#users-container tbody tr').forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+
+    document.querySelectorAll('.btn-edit-user').forEach(btn => {
+        btn.addEventListener('click', () => openEditUser(btn.dataset.id));
+    });
+    document.querySelectorAll('.btn-delete-user').forEach(btn => {
+        btn.addEventListener('click', () => deleteUser(btn.dataset.id, btn.dataset.name));
     });
 }
 
-function infoRow(label, value, small = false) {
-    const style = small ? ' style="font-size:11px;color:var(--grey)"' : '';
-    return `<div class="info-row">
-        <div class="info-label">${esc(label)}</div>
-        <div class="info-value"${style}>${esc(value || '—')}</div>
-    </div>`;
+function userRowHtml(u) {
+    const initials = (u.full_name || u.email || '?').charAt(0).toUpperCase();
+    const isSelf   = u.id === currentProfile?.id;
+    const roleCls  = u.role === 'admin' ? 'role-badge-admin' : 'role-badge-user';
+    const roleLabel = u.role === 'admin' ? 'Admin' : 'User';
+    return `<tr>
+        <td>
+            <div style="display:flex;align-items:center;gap:10px">
+                ${u.avatar_url
+                    ? `<img src="${esc(u.avatar_url)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+                    : `<div class="user-initial">${initials}</div>`}
+                <strong>${esc(u.full_name||'—')}</strong>${isSelf?'<span class="user-self-tag">tu</span>':''}
+            </div>
+        </td>
+        <td style="font-size:13px;color:var(--grey)">${esc(u.email)}</td>
+        <td><span class="role-badge ${roleCls}">${roleLabel}</span></td>
+        <td style="font-size:12px;color:var(--grey)">${fmtDate(u.created_at)}</td>
+        <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-ping btn-edit-user" data-id="${esc(u.id)}">✏ Modifica</button>
+            ${!isSelf?`<button class="btn-delete-user" data-id="${esc(u.id)}" data-name="${esc(u.full_name||u.email)}" style="background:none;border:none;color:var(--red-text);font-size:13px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:8px;transition:background .15s" onmouseover="this.style.background='var(--red-bg)'" onmouseout="this.style.background='none'">🗑 Elimina</button>`:''}
+        </td>
+    </tr>`;
 }
 
-function rateLabel(integ) {
-    if (!integ || integ.total === 0) return '—';
-    return integ.rate + '%';
+function openEditUser(id) {
+    const u = _usersCache.find(x => x.id === id);
+    if (!u) return;
+    document.getElementById('edit-user-id').value     = u.id;
+    document.getElementById('edit-user-name').value   = u.full_name || '';
+    document.getElementById('edit-user-role').value   = u.role;
+    document.getElementById('edit-user-error').style.display = 'none';
+    document.getElementById('edit-user-overlay').style.display = 'flex';
+
+    const saveBtn = document.getElementById('btn-save-user');
+    saveBtn.onclick = async () => {
+        const name = document.getElementById('edit-user-name').value.trim();
+        const role = document.getElementById('edit-user-role').value;
+        saveBtn.textContent = '...'; saveBtn.disabled = true;
+        const { error } = await _SB.from('mon_profiles').update({ full_name: name, role }).eq('id', u.id);
+        saveBtn.textContent = 'Salva'; saveBtn.disabled = false;
+        if (error) {
+            const errEl = document.getElementById('edit-user-error');
+            errEl.textContent = error.message; errEl.style.display = 'block';
+        } else {
+            document.getElementById('edit-user-overlay').style.display = 'none';
+            loadUsers();
+        }
+    };
+
+    document.getElementById('edit-user-close').onclick = () => {
+        document.getElementById('edit-user-overlay').style.display = 'none';
+    };
+    document.getElementById('edit-user-overlay').onclick = e => {
+        if (e.target === document.getElementById('edit-user-overlay'))
+            document.getElementById('edit-user-overlay').style.display = 'none';
+    };
 }
 
-// ─── FORMATTING ───────────────────────────────────────────────────────────────
-function displayName(name) {
-    const map = { 'in3pida-form-2': 'in3pida Form 2.0', 'smart-working': 'Smart Working', 'llm-positioning': 'Plugin LLM' };
-    return map[name] || name;
-}
-
-function dot(status, lg = false) {
-    return `<span class="dot${lg ? ' lg' : ''} ${esc(status)}"></span>`;
-}
-
-function statusLabel(s) {
-    return { green: 'Tutto OK', yellow: 'Attenzione', red: 'Errore', grey: 'N/D' }[s] || s;
-}
-
-function timeAgo(dateStr) {
-    if (!dateStr) return '—';
-    const mins = Math.round((Date.now() - new Date(dateStr)) / 60000);
-    if (mins < 2)    return 'adesso';
-    if (mins < 60)   return `${mins} min fa`;
-    if (mins < 1440) return `${Math.round(mins / 60)} ore fa`;
-    return `${Math.round(mins / 1440)} giorni fa`;
-}
-
-function fmtDate(dateStr) {
-    if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function esc(str) {
-    if (str === null || str === undefined) return '';
-    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function loadingHtml() {
-    return '<div class="loading"><div class="spinner"></div> Caricamento...</div>';
-}
-
-function errorHtml() {
-    return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>';
-}
-
-function emptyHtml(title, sub) {
-    return `<div class="empty-state">
-        <div class="empty-icon">📊</div>
-        <div class="empty-title">${title}</div>
-        <div class="empty-sub">${sub}</div>
-    </div>`;
+async function deleteUser(id, name) {
+    if (!confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`)) return;
+    const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
+    if (error) { alert('Errore: ' + error.message); return; }
+    loadUsers();
 }
