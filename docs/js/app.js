@@ -127,8 +127,10 @@ async function loadLatest() {
 function updateLatestVersions(sites) {
     (sites || []).forEach(s => {
         if (!s.plugin_version) return;
-        if (!latestVersions[s.plugin_name] || semverGt(s.plugin_version, latestVersions[s.plugin_name])) {
-            latestVersions[s.plugin_name] = s.plugin_version;
+        const cur = latestVersions[s.plugin_name];
+        const curVer = cur ? (typeof cur === 'object' ? cur.version : cur) : null;
+        if (!curVer || semverGt(s.plugin_version, curVer)) {
+            latestVersions[s.plugin_name] = { version: s.plugin_version, date: null };
         }
     });
 }
