@@ -335,9 +335,24 @@ async function loadSites(pluginName, silent = false) {
     recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
 
     const now = new Date();
+    const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
     const enriched = (sites||[]).map(s => {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
-        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{} };
+        const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
+        const integ = integMap[s.site_id] || {};
+        const integErrors = ['supabase','crm','amelia'].filter(k => integ[k] === 'error');
+        let overallStatus, overallTooltip;
+        if (heartbeatStatus !== 'green') {
+            overallStatus = heartbeatStatus;
+            overallTooltip = `Nessun segnale da ${Math.round(hrs)}h`;
+        } else if (integErrors.length > 0) {
+            overallStatus = 'yellow';
+            overallTooltip = 'Errore: ' + integErrors.map(k => integLabelsShort[k]).join(', ');
+        } else {
+            overallStatus = 'green';
+            overallTooltip = 'Tutto ok';
+        }
+        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integ };
     });
 
     const active = enriched.filter(s=>s.status==='green').length;
@@ -411,7 +426,7 @@ function siteRowHtml(s) {
     const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
     const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
     return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
-        <td>${dot(s.status)}</td>
+        <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
@@ -779,7 +794,7 @@ function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return in
 function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
 
 function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
-function dot(status, lg=false) { return `<span class="dot${lg?' lg':''} ${esc(status)}"></span>`; }
+function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''} ${esc(status)}"${title?` title="${esc(title)}"`:''} style="cursor:default"></span>`; }
 function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
 function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
 function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
