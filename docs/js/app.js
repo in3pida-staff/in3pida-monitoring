@@ -453,7 +453,7 @@ async function loadSiteDetail(siteId, silent = false) {
     (allEvents||[]).forEach(e => { const day=e.created_at.slice(0,10); if(dailyCounts[day]!==undefined) dailyCounts[day]++; });
 
     const trendDays = {};
-    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0,err:0},crm:{ok:0,tot:0,err:0},amelia:{ok:0,tot:0,err:0}}; }
 
     (intTrends||[]).forEach(raw => {
         let s = normalizeRecord(raw);
@@ -468,9 +468,10 @@ async function loadSiteDetail(siteId, silent = false) {
                 ? s.status==='ok'
                 : (s.status==='ok'||s.status==='info'||s.status==='skipped');
             if(isOk) trendDays[day][s.integration].ok++;
+            if(s.status==='error') trendDays[day][s.integration].err++;
         }
     });
-    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
+    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null,errRate:d[integ].tot>0?d[integ].err/d[integ].tot:null})) }));
 
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
@@ -543,14 +544,14 @@ async function loadSiteDetail(siteId, silent = false) {
             const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
             if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
             const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
-            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=row.integ==='amelia'?'ok':r.rate===100?'ok':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.errRate===0?'ok':r.errRate<0.5?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
         })()}
         <div class="stat-cards-row">
             <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
             <div class="stat-big-card cyan"><div class="stat-big-num">${events?.length||0}</div><div class="stat-big-label">Richieste negli ultimi 7 giorni</div></div>
-            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
-            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
-            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.supabase)}"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.crm)}"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.amelia)}"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
         </div>
         <div class="card" id="card-features">
             <div class="card-header"><span class="card-title">Funzionalità</span></div>
@@ -775,6 +776,7 @@ function setBreadcrumb(items) {
 }
 function infoRow(label, value, small=false) { return `<div class="info-row"><div class="info-label">${esc(label)}</div><div class="info-value"${small?' style="font-size:11px;color:var(--grey)"':''}>${esc(value||'—')}</div></div>`; }
 function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
+function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
 
 function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
 function dot(status, lg=false) { return `<span class="dot${lg?' lg':''} ${esc(status)}"></span>`; }
