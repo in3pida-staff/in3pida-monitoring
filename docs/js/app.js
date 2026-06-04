@@ -486,8 +486,16 @@ async function loadSiteDetail(siteId, silent = false) {
         }
         const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
         const rate = ok/stats.length;
-        // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
-        const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
+        // Amelia: dot basato sul tasso di errori veri (skipped/info = consenso non dato o duplicato, non sono errori)
+        // Supabase/CRM: solo 100% è verde
+        let status;
+        if (integ === 'amelia') {
+            const errCount = stats.filter(s => s.status === 'error').length;
+            const errRate  = errCount / stats.length;
+            status = errRate === 0 ? 'green' : errRate < 0.5 ? 'yellow' : 'red';
+        } else {
+            status = rate >= 1 ? 'green' : 'red';
+        }
         integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
@@ -512,7 +520,7 @@ async function loadSiteDetail(siteId, silent = false) {
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
     setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
 
-    const integLabels = {supabase:'Supabase',crm:'CRM',amelia:'Amelia'};
+    const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
