@@ -332,7 +332,16 @@ async function loadSites(pluginName, silent = false) {
     const lastReqMap = {};
     lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
     const integMap = {};
-    recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
+    const errorSetMap = {};
+    recentStats.forEach(raw => {
+        const s = normalizeRecord(raw);
+        if (!integMap[s.site_id]) integMap[s.site_id]={};
+        if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status;
+        if (s.status === 'error') {
+            if (!errorSetMap[s.site_id]) errorSetMap[s.site_id] = new Set();
+            errorSetMap[s.site_id].add(s.integration);
+        }
+    });
 
     const now = new Date();
     const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
@@ -340,7 +349,7 @@ async function loadSites(pluginName, silent = false) {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
         const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
         const integ = integMap[s.site_id] || {};
-        const integErrors = ['supabase','crm','amelia'].filter(k => integ[k] === 'error');
+        const integErrors = ['supabase','crm','amelia'].filter(k => (errorSetMap[s.site_id]||new Set()).has(k));
         let overallStatus, overallTooltip;
         if (heartbeatStatus !== 'green') {
             overallStatus = heartbeatStatus;
