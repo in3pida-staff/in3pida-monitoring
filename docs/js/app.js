@@ -31,21 +31,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!session) { dbg('NO SESSION → redirect'); setTimeout(()=>{ window.location.href = 'login.html'; },2000); return; }
     dbg('session ok, fetching profile...');
 
-    let profileRes;
+    let profile;
     try {
-        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('TIMEOUT 8s')),8000));
-        profileRes = await Promise.race([
+        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),6000));
+        const profileRes = await Promise.race([
             _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(),
             timeout
         ]);
-        dbg('profile data='+JSON.stringify(profileRes?.data?.email)+' err='+JSON.stringify(profileRes?.error?.message||profileRes?.error?.code));
-    } catch(e) { dbg('profile ERR: '+e.message); return; }
-    const profile = profileRes?.data;
+        profile = profileRes?.data || null;
+    } catch(e) { profile = null; }
     if (!profile) {
-        dbg('NO PROFILE → signout+redirect (err='+JSON.stringify(profileRes?.error?.message)+')');
-        await _SB.auth.signOut();
-        setTimeout(()=>{ window.location.href = 'login.html?error=unauthorized'; },2000);
-        return;
+        // Fallback: costruisce profilo dai dati di sessione
+        const email = session.user.email || '';
+        const isAdmin = email === 'mario@in3pida.it' || session.user.user_metadata?.role === 'admin';
+        if (!email) { await _SB.auth.signOut(); window.location.href = 'login.html'; return; }
+        profile = {
+            id: session.user.id,
+            email,
+            full_name: session.user.user_metadata?.full_name || email.split('@')[0],
+            role: isAdmin ? 'admin' : 'user',
+            avatar_url: session.user.user_metadata?.avatar_url || null
+        };
+        dbg('profile da sessione: '+email);
+    } else {
+        dbg('profile ok: '+profile.email);
     }
 
     currentProfile = profile;
