@@ -25,12 +25,8 @@ const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    document.body.insertAdjacentHTML('afterbegin','<div id="dbg" style="position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;font-family:monospace;padding:4px 8px;z-index:9999">INIT START...</div>');
-    const dbg = t => { document.getElementById('dbg').textContent = t; };
-    let sbRes; try { sbRes = await _SB.auth.getSession(); dbg('getSession ok: '+JSON.stringify(sbRes?.data?.session?.user?.email)); } catch(e) { dbg('getSession CRASH: '+e.message); return; }
-    const { data: { session } } = sbRes;
-    if (!session) { dbg('NO SESSION → redirect'); setTimeout(()=>{ window.location.href = 'login.html'; },2000); return; }
-    dbg('session ok, fetching profile...');
+    const { data: { session } } = await _SB.auth.getSession();
+    if (!session) { window.location.href = 'login.html'; return; }
 
     let profile;
     try {
@@ -53,9 +49,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             role: isAdmin ? 'admin' : 'user',
             avatar_url: session.user.user_metadata?.avatar_url || null
         };
-        dbg('profile da sessione: '+email);
-    } else {
-        dbg('profile ok: '+profile.email);
     }
 
     currentProfile = profile;
