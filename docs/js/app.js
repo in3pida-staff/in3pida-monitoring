@@ -659,7 +659,7 @@ async function loadSiteDetail(siteId, silent = false) {
 
             try {
                 if (key === '__semafori__') {
-                    const {error: sbErr} = await _SB.from('mon_sites').update({feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn}).eq('site_id', sid);
+                    const {error: sbErr} = await _SBq.from('mon_sites').update({feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn}).eq('site_id', sid);
                     if (sbErr) throw new Error(sbErr.message);
                     if (url && apiKey) {
                         for (const k of ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']) {
@@ -671,7 +671,7 @@ async function loadSiteDetail(siteId, silent = false) {
                     }
                 } else {
                     const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
-                    if (sbKey) { const {error:e} = await _SB.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
+                    if (sbKey) { const {error:e} = await _SBq.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
                     if (url && apiKey) {
                         fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
                             method: 'POST', headers: {'Content-Type':'application/json'},
