@@ -215,7 +215,7 @@ async function loadPlugins(silent = false) {
         if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
     });
     Object.values(plugins).forEach(p => {
-        p.status = (p.errors > 0) ? 'red' : (p.inactive > 0 && p.active === 0) ? 'grey' : (p.inactive > 0) ? 'yellow' : 'green';
+        p.status = (p.errors > 0 && p.active > 0) ? 'red' : (p.active === 0) ? 'grey' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
     });
 
     const dailyGlobal = {};
