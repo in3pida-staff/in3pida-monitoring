@@ -183,6 +183,7 @@ async function loadPlugins(silent = false) {
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
     const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
+    el.innerHTML = `<div style="padding:20px;background:#fff3cd;border-radius:8px;font-size:13px;font-family:monospace">DEBUG: sites=${sites?.length??'null'} | r1.error=${JSON.stringify(r1.error)} | r2.error=${JSON.stringify(r2.error)} | r3.error=${JSON.stringify(r3.error)}</div>`;
     updateLatestVersions(sites);
 
     const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
