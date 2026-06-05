@@ -1,8 +1,9 @@
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
-const _SB = window.supabase.createClient(
-    'https://yyauvoqjdzrbmebeafit.supabase.co',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w'
-);
+const _SBURL = 'https://yyauvoqjdzrbmebeafit.supabase.co';
+const _SBKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w';
+const _SB  = window.supabase.createClient(_SBURL, _SBKEY);
+// client separato senza auth per le query su tabelle senza RLS
+const _SBq = window.supabase.createClient(_SBURL, _SBKEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 let currentView    = 'plugins';
@@ -199,9 +200,9 @@ async function loadPlugins(silent = false) {
     const thirtyAgo = new Date(now - 30 * 86400000);
 
     const [r1, r2, r3] = await Promise.all([
-        _SB.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
-        _SB.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
-        _SB.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
+        _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
+        _SBq.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
     ]);
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
@@ -303,8 +304,8 @@ async function loadErrors(silent = false) {
 
     const yesterday = new Date(Date.now() - 86400000);
     const [{ data: errStats }, { data: allSites }] = await Promise.all([
-        _SB.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
-        _SB.from('mon_sites').select('*')
+        _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
+        _SBq.from('mon_sites').select('*')
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
@@ -339,15 +340,15 @@ async function loadSites(pluginName, silent = false) {
     if (!silent) el.innerHTML = loadingHtml();
 
     const yesterday = new Date(Date.now() - 86400000);
-    const { data: sites } = await _SB.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
+    const { data: sites } = await _SBq.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
     updateLatestVersions(sites);
     const siteIds = (sites||[]).map(s => s.site_id);
 
     let lastEvents = [], recentStats = [];
     if (siteIds.length > 0) {
         const [le, rs] = await Promise.all([
-            _SB.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
-            _SB.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
+            _SBq.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
+            _SBq.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
         ]);
         lastEvents = le.data || [];
         recentStats = rs.data || [];
@@ -484,16 +485,16 @@ async function loadSiteDetail(siteId, silent = false) {
     const weekAgo   = new Date(now - 7  * 86400000);
     const thirtyAgo = new Date(now - 30 * 86400000);
 
-    const { data: site, error: se } = await _SB.from('mon_sites').select('*').eq('site_id', siteId).single();
+    const { data: site, error: se } = await _SBq.from('mon_sites').select('*').eq('site_id', siteId).single();
     if (se) { el.innerHTML = errorHtml(); return; }
 
     const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }] = await Promise.all([
-        _SB.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
-        _SB.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()),
-        _SB.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
-        _SB.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
-        _SB.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()),
-        _SB.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
+        _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
+        _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()),
+        _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
+        _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
+        _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()),
+        _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
     ]);
 
     const dailyCounts = {};
