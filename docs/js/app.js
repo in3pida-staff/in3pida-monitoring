@@ -215,7 +215,7 @@ async function loadPlugins(silent = false) {
         if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
     });
     Object.values(plugins).forEach(p => {
-        p.status = (p.inactive > 0 && p.active === 0) ? 'red' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
+        p.status = (p.errors > 0) ? 'red' : (p.inactive > 0 && p.active === 0) ? 'grey' : (p.inactive > 0) ? 'yellow' : 'green';
     });
 
     const dailyGlobal = {};
@@ -365,15 +365,16 @@ async function loadSites(pluginName, silent = false) {
     const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
     const enriched = (sites||[]).map(s => {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
-        const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
+        const heartbeatStatus = hrs<25?'green':'grey';
         const integ = integMap[s.site_id] || {};
-        const integErrors = ['supabase','crm','amelia'].filter(k => (errorSetMap[s.site_id]||new Set()).has(k));
+        // Usa lo stato più recente per ogni integrazione (recupero immediato quando errore risolto)
+        const integErrors = ['supabase','crm','amelia'].filter(k => integ[k] === 'error');
         let overallStatus, overallTooltip;
         if (heartbeatStatus !== 'green') {
-            overallStatus = heartbeatStatus;
-            overallTooltip = `Nessun segnale da ${Math.round(hrs)}h`;
+            overallStatus = 'grey';
+            overallTooltip = hrs > 168 ? 'Plugin probabilmente disinstallato' : `Nessun segnale da ${Math.round(hrs)}h`;
         } else if (integErrors.length > 0) {
-            overallStatus = 'yellow';
+            overallStatus = 'red';
             overallTooltip = 'Errore: ' + integErrors.map(k => integLabelsShort[k]).join(', ');
         } else {
             overallStatus = 'green';
