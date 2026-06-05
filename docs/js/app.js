@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('nav-users').style.display = '';
     }
 
-    await loadLatest();
+    loadLatest();
     loadPlugins();
     setInterval(refresh, 60000);
 
@@ -127,10 +127,8 @@ async function loadLatest() {
 function updateLatestVersions(sites) {
     (sites || []).forEach(s => {
         if (!s.plugin_version) return;
-        const cur = latestVersions[s.plugin_name];
-        const curVer = cur ? (typeof cur === 'object' ? cur.version : cur) : null;
-        if (!curVer || semverGt(s.plugin_version, curVer)) {
-            latestVersions[s.plugin_name] = { version: s.plugin_version, date: null };
+        if (!latestVersions[s.plugin_name] || semverGt(s.plugin_version, latestVersions[s.plugin_name])) {
+            latestVersions[s.plugin_name] = s.plugin_version;
         }
     });
 }
@@ -145,10 +143,8 @@ function semverGt(a, b) {
 function latestInfo(pluginName) {
     const v = latestVersions[pluginName];
     if (!v) return null;
-    const version = typeof v === 'object' ? v.version : v;
-    const date    = typeof v === 'object' ? v.date    : null;
-    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
-    return { version, date, download_url: urls[pluginName] || '' };
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${v}.zip` };
+    return { version: v, download_url: urls[pluginName] || '' };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -205,31 +201,27 @@ async function loadPlugins(silent = false) {
     const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
     (eventsAll || []).forEach(e => {
         const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
-        if (dailyGlobal[day] !== undefined) {
-            if (!dailyGlobal[day][pn]) dailyGlobal[day][pn] = new Set();
-            dailyGlobal[day][pn].add(e.site_id);
-        }
+        if (dailyGlobal[day] !== undefined) dailyGlobal[day][pn] = (dailyGlobal[day][pn] || 0) + 1;
     });
     const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
-    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
+    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, counts]) => ({ date, count: counts[pn] || 0 })) }));
 
     const list = Object.values(plugins);
     if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
 
     const active = list.reduce((s, p) => s + p.active, 0);
     const errors = list.reduce((s, p) => s + p.errors, 0);
-    const firstPlugin = pluginNames[0] || null;
     setHero('Monitoring', 'in3pida Monitoring', [
         { num: list.length, label: 'Plugin monitorati' },
-        { num: active,  label: 'Plugin attivi',    onclick: firstPlugin ? () => loadSites(firstPlugin) : null },
-        { num: errors,  label: 'Siti con errori',  onclick: loadErrors },
+        { num: active, label: 'Plugin attivi' },
+        { num: errors, label: 'Siti con errori', clickable: true, action: 'errors' }
     ]);
 
     el.innerHTML = `
         <p class="section-title">Plugin installati</p>
         <div class="plugins-grid">${list.map(pluginCardHtml).join('')}</div>
         ${dailySeries.length > 0 ? `<div class="card" style="margin-top:24px">
-            <div class="card-header"><span class="card-title">Installazioni con richieste</span>
+            <div class="card-header"><span class="card-title">Andamento richieste</span>
             <div class="chart-toggle" id="global-toggle">
                 <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
                 <button class="chart-toggle-btn" data-range="30">30 giorni</button>
@@ -332,50 +324,17 @@ async function loadSites(pluginName, silent = false) {
     const lastReqMap = {};
     lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
     const integMap = {};
-    const errorSetMap = {};
-    recentStats.forEach(raw => {
-        const s = normalizeRecord(raw);
-        if (!integMap[s.site_id]) integMap[s.site_id]={};
-        if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status;
-        if (s.status === 'error') {
-            if (!errorSetMap[s.site_id]) errorSetMap[s.site_id] = new Set();
-            errorSetMap[s.site_id].add(s.integration);
-        }
-    });
+    recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
 
     const now = new Date();
-    const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
     const enriched = (sites||[]).map(s => {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
-        const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
-        const integ = integMap[s.site_id] || {};
-        const integErrors = ['supabase','crm','amelia'].filter(k => (errorSetMap[s.site_id]||new Set()).has(k));
-        let overallStatus, overallTooltip;
-        if (heartbeatStatus !== 'green') {
-            overallStatus = heartbeatStatus;
-            overallTooltip = `Nessun segnale da ${Math.round(hrs)}h`;
-        } else if (integErrors.length > 0) {
-            overallStatus = 'yellow';
-            overallTooltip = 'Errore: ' + integErrors.map(k => integLabelsShort[k]).join(', ');
-        } else {
-            overallStatus = 'green';
-            overallTooltip = 'Tutto ok';
-        }
-        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integ };
+        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{} };
     });
 
     const active = enriched.filter(s=>s.status==='green').length;
     const inactive = enriched.filter(s=>s.status!=='green').length;
-    const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
-        r.style.display = f===null||(f==='green'&&r.dataset.status==='green')||(f==='inactive'&&r.dataset.status!=='green') ? '' : 'none';
-    });
-    const li = latestInfo(pluginName);
-    setHero(displayName(pluginName), displayName(pluginName), [
-        { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
-        { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
-        { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: 'Ultima versione' },
-    ]);
+    setHero(displayName(pluginName), displayName(pluginName), [{num:enriched.length,label:'Siti installati'},{num:active,label:'Plugin attivi'},{num:inactive,label:'Senza segnale'}]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
 
@@ -383,7 +342,7 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
@@ -434,12 +393,12 @@ function siteRowHtml(s) {
     const integ = s.last_integ || {};
     const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
     const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
-    return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
-        <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
+    return `<tr data-site-id="${esc(s.site_id)}">
+        <td>${dot(s.status)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
         <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
-        <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:var(--magenta);font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';})()}</td>
+        <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
+        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:var(--magenta);font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:#bbb">—</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
         <td style="white-space:nowrap">
@@ -477,7 +436,7 @@ async function loadSiteDetail(siteId, silent = false) {
     (allEvents||[]).forEach(e => { const day=e.created_at.slice(0,10); if(dailyCounts[day]!==undefined) dailyCounts[day]++; });
 
     const trendDays = {};
-    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0,err:0},crm:{ok:0,tot:0,err:0},amelia:{ok:0,tot:0,err:0}}; }
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
 
     (intTrends||[]).forEach(raw => {
         let s = normalizeRecord(raw);
@@ -492,10 +451,9 @@ async function loadSiteDetail(siteId, silent = false) {
                 ? s.status==='ok'
                 : (s.status==='ok'||s.status==='info'||s.status==='skipped');
             if(isOk) trendDays[day][s.integration].ok++;
-            if(s.status==='error') trendDays[day][s.integration].err++;
         }
     });
-    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null,errRate:d[integ].tot>0?d[integ].err/d[integ].tot:null})) }));
+    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
 
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
@@ -511,10 +469,8 @@ async function loadSiteDetail(siteId, silent = false) {
         }
         const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
         const rate = ok/stats.length;
-        // Dot basato sul tasso di errori veri per tutti e 3: skipped/info non sono errori
-        const errCount = stats.filter(s => s.status === 'error').length;
-        const errRate  = errCount / stats.length;
-        const status   = errRate === 0 ? 'green' : errRate < 0.5 ? 'yellow' : 'red';
+        // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
+        const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
         integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
@@ -539,7 +495,7 @@ async function loadSiteDetail(siteId, silent = false) {
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
     setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
 
-    const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
+    const integLabels = {supabase:'Supabase',crm:'CRM',amelia:'Amelia'};
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
@@ -568,24 +524,26 @@ async function loadSiteDetail(siteId, silent = false) {
             const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
             if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
             const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
-            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.errRate===0?'ok':r.errRate<0.5?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=row.integ==='amelia'?'ok':r.rate===100?'ok':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
         })()}
         <div class="stat-cards-row">
             <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
             <div class="stat-big-card cyan"><div class="stat-big-num">${events?.length||0}</div><div class="stat-big-label">Richieste negli ultimi 7 giorni</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.supabase)}"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.crm)}"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.amelia)}"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
         </div>
         <div class="card" id="card-features">
             <div class="card-header"><span class="card-title">Funzionalità</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
-                    {key:'if2_feature_stats',        label:'Statistiche',            val:site.feature_stats},
-                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',       val:site.feature_crm_tab},
-                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida',   val:site.feature_settings_tab},
-                    {key:'__semafori__',             label:'Semafori DB / CRM / Amelia', val:site.feature_dot_db!==false&&site.feature_dot_db!==0&&site.feature_dot_crm!==false&&site.feature_dot_crm!==0&&site.feature_dot_amelia!==false&&site.feature_dot_amelia!==0},
-                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattiva'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="width:44px;height:26px;border-radius:13px;background:${on?'var(--cyan)':'var(--magenta)'};border:none;cursor:pointer;position:relative;padding:0;flex-shrink:0"><span style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on?'21px':'3px'};display:block;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span></button></div></div>`;}).join('')}
+                    {key:'if2_feature_stats',        label:'Statistiche',          val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',     val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida', val:site.feature_settings_tab},
+                    {key:'if2_feature_dot_db',       label:'Semaforo DB',          val:site.feature_dot_db},
+                    {key:'if2_feature_dot_crm',      label:'Semaforo CRM',         val:site.feature_dot_crm},
+                    {key:'if2_feature_dot_amelia',   label:'Semaforo Amelia',      val:site.feature_dot_amelia},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'var(--magenta)':'var(--cyan)'};background:transparent;color:${on?'var(--magenta)':'var(--cyan)'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
             </div>
         </div>
         <div class="card">
@@ -623,55 +581,24 @@ async function loadSiteDetail(siteId, silent = false) {
 
     el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const key    = btn.dataset.key;
-            const value  = parseInt(btn.dataset.value); // valore da impostare (0 o 1)
-            const sid    = btn.dataset.site;
-            const url    = btn.dataset.url;
+            btn.disabled = true; btn.textContent = '...';
+            const key   = btn.dataset.key;
+            const value = parseInt(btn.dataset.value);
+            const sid   = btn.dataset.site;
+            const url   = btn.dataset.url;
             const apiKey = btn.dataset.apikey;
-            const nowOn  = value === 1; // nuovo stato dopo il click
-
-            // Aggiornamento visivo immediato
-            btn.style.background    = nowOn ? 'var(--cyan)' : 'var(--magenta)';
-            btn.style.pointerEvents = 'none';
-            const knob = btn.querySelector('span');
-            if (knob) knob.style.left = nowOn ? '21px' : '3px';
-            const stateLabel = btn.parentElement.querySelector('span:first-child');
-            if (stateLabel) { stateLabel.textContent = nowOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = nowOn ? 'var(--cyan)' : 'var(--magenta)'; }
-            btn.dataset.value = nowOn ? 0 : 1;
-
             try {
-                if (key === '__semafori__') {
-                    const {error: sbErr} = await _SB.from('mon_sites').update({feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn}).eq('site_id', sid);
-                    if (sbErr) throw new Error(sbErr.message);
-                    if (url && apiKey) {
-                        for (const k of ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']) {
-                            fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                                method: 'POST', headers: {'Content-Type':'application/json'},
-                                body: JSON.stringify({ api_key: apiKey, key: k, value }),
-                            }).catch(()=>{});
-                        }
-                    }
-                } else {
-                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
-                    if (sbKey) { const {error:e} = await _SB.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
-                    if (url && apiKey) {
-                        fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                            method: 'POST', headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ api_key: apiKey, key, value }),
-                        }).catch(()=>{});
-                    }
+                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_dot_db:'feature_dot_db',if2_feature_dot_crm:'feature_dot_crm',if2_feature_dot_amelia:'feature_dot_amelia'}[key];
+                if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
+                if (url && apiKey) {
+                    await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: apiKey, key, value }),
+                    }).catch(()=>{});
                 }
-            } catch(err) {
-                // Ripristina stato precedente in caso di errore
-                const wasOn = !nowOn;
-                btn.style.background = wasOn ? 'var(--cyan)' : 'var(--magenta)';
-                if (knob) knob.style.left = wasOn ? '21px' : '3px';
-                if (stateLabel) { stateLabel.textContent = wasOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = wasOn ? 'var(--cyan)' : 'var(--magenta)'; }
-                btn.dataset.value = value;
-                console.error('Toggle error:', err.message);
-            } finally {
-                btn.style.pointerEvents = '';
-            }
+                setTimeout(() => loadSiteDetail(sid), 800);
+            } catch { btn.disabled = false; btn.textContent = 'Errore'; }
         });
     });
 
@@ -786,12 +713,8 @@ function setHero(label, title, stats) {
     document.getElementById('hero-label').textContent = label;
     document.getElementById('hero-title').textContent = title;
     const el = document.getElementById('sw-stats');
-    if (stats&&stats.length>0) {
-        el.style.display='';
-        const colors=['var(--magenta)','var(--cyan)','var(--dark)'];
-        el.innerHTML=stats.map((s,i)=>{const bg=s.color||colors[i%colors.length];const icon=s.icon!==undefined?s.icon:s.num;const display=s.display!==undefined?s.display:s.num;return`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${bg}">${icon}</div><div class="sw-stat-text"><div class="sw-stat-num">${display}</div><div class="sw-stat-label">${s.label}</div></div></div>`;}).join('');
-        stats.forEach((s,i)=>{ if(s.onclick){ const card=el.querySelector(`[data-i="${i}"]`); if(card) card.addEventListener('click', s.onclick); } });
-    } else el.style.display='none';
+    if (stats&&stats.length>0) { el.style.display=''; const colors=['var(--magenta)','var(--cyan)','var(--dark)']; el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" ${s.clickable?`data-action="${esc(s.action)}"`:''}>  <div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join(''); }
+    else el.style.display='none';
 }
 function setBreadcrumb(items) {
     const el = document.getElementById('breadcrumb');
@@ -800,10 +723,9 @@ function setBreadcrumb(items) {
 }
 function infoRow(label, value, small=false) { return `<div class="info-row"><div class="info-label">${esc(label)}</div><div class="info-value"${small?' style="font-size:11px;color:var(--grey)"':''}>${esc(value||'—')}</div></div>`; }
 function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
-function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
 
 function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
-function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''} ${esc(status)}"${title?` title="${esc(title)}"`:''} style="cursor:default"></span>`; }
+function dot(status, lg=false) { return `<span class="dot${lg?' lg':''} ${esc(status)}"></span>`; }
 function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
 function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
 function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
