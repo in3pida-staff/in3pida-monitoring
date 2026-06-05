@@ -31,10 +31,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!session) { dbg('NO SESSION → redirect'); setTimeout(()=>{ window.location.href = 'login.html'; },2000); return; }
     dbg('session ok, fetching profile...');
 
-    let profileRes; try { profileRes = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(); dbg('profile: '+JSON.stringify(profileRes?.data?.email)+' err:'+JSON.stringify(profileRes?.error?.message)); } catch(e) { dbg('profile CRASH: '+e.message); return; }
+    let profileRes;
+    try {
+        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('TIMEOUT 8s')),8000));
+        profileRes = await Promise.race([
+            _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(),
+            timeout
+        ]);
+        dbg('profile data='+JSON.stringify(profileRes?.data?.email)+' err='+JSON.stringify(profileRes?.error?.message||profileRes?.error?.code));
+    } catch(e) { dbg('profile ERR: '+e.message); return; }
     const profile = profileRes?.data;
     if (!profile) {
-        dbg('NO PROFILE → signout+redirect');
+        dbg('NO PROFILE → signout+redirect (err='+JSON.stringify(profileRes?.error?.message)+')');
         await _SB.auth.signOut();
         setTimeout(()=>{ window.location.href = 'login.html?error=unauthorized'; },2000);
         return;
