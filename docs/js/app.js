@@ -597,12 +597,14 @@ async function loadSiteDetail(siteId, silent = false) {
             <div class="stat-big-card ${statCardClass(integrationStatus.amelia)}"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
         </div>
         <div class="card" id="card-features">
-            <div class="card-header"><span class="card-title">Funzionalità</span></div>
+            <div class="card-header"><span class="card-title">Funzionalità visibili sul plugin</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
                     {key:'if2_feature_stats',        label:'Statistiche',            val:site.feature_stats},
                     {key:'if2_feature_crm_tab',      label:'Integrazione CRM',       val:site.feature_crm_tab},
                     {key:'if2_feature_settings_tab', label:'Impostazioni in3pida',   val:site.feature_settings_tab},
+                    {key:'if2_feature_date_chiuse',  label:'Date chiuse',            val:site.feature_date_chiuse!==false&&site.feature_date_chiuse!==0},
+                    {key:'if2_feature_minimum_stay', label:'Minimum stay',           val:site.feature_minimum_stay!==false&&site.feature_minimum_stay!==0},
                     {key:'__semafori__',             label:'Semafori DB / CRM / Amelia', val:site.feature_dot_db!==false&&site.feature_dot_db!==0&&site.feature_dot_crm!==false&&site.feature_dot_crm!==0&&site.feature_dot_amelia!==false&&site.feature_dot_amelia!==0},
                 ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattiva'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="width:44px;height:26px;border-radius:13px;background:${on?'var(--cyan)':'var(--magenta)'};border:none;cursor:pointer;position:relative;padding:0;flex-shrink:0"><span style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on?'21px':'3px'};display:block;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span></button></div></div>`;}).join('')}
             </div>
@@ -671,7 +673,7 @@ async function loadSiteDetail(siteId, silent = false) {
                         }
                     }
                 } else {
-                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab'}[key];
+                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_date_chiuse:'feature_date_chiuse',if2_feature_minimum_stay:'feature_minimum_stay'}[key];
                     if (sbKey) { const {error:e} = await _SBq.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
                     if (url && apiKey) {
                         fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
