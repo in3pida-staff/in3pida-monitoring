@@ -24,13 +24,19 @@ const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    const { data: { session } } = await _SB.auth.getSession();
-    if (!session) { window.location.href = 'login.html'; return; }
+    document.body.insertAdjacentHTML('afterbegin','<div id="dbg" style="position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;font-family:monospace;padding:4px 8px;z-index:9999">INIT START...</div>');
+    const dbg = t => { document.getElementById('dbg').textContent = t; };
+    let sbRes; try { sbRes = await _SB.auth.getSession(); dbg('getSession ok: '+JSON.stringify(sbRes?.data?.session?.user?.email)); } catch(e) { dbg('getSession CRASH: '+e.message); return; }
+    const { data: { session } } = sbRes;
+    if (!session) { dbg('NO SESSION → redirect'); setTimeout(()=>{ window.location.href = 'login.html'; },2000); return; }
+    dbg('session ok, fetching profile...');
 
-    const { data: profile } = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single();
+    let profileRes; try { profileRes = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(); dbg('profile: '+JSON.stringify(profileRes?.data?.email)+' err:'+JSON.stringify(profileRes?.error?.message)); } catch(e) { dbg('profile CRASH: '+e.message); return; }
+    const profile = profileRes?.data;
     if (!profile) {
+        dbg('NO PROFILE → signout+redirect');
         await _SB.auth.signOut();
-        window.location.href = 'login.html?error=unauthorized';
+        setTimeout(()=>{ window.location.href = 'login.html?error=unauthorized'; },2000);
         return;
     }
 
