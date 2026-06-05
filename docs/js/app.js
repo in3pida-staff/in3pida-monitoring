@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let profile;
     try {
-        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),6000));
+        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),2000));
         const profileRes = await Promise.race([
             _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(),
             timeout
