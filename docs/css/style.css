@@ -543,7 +543,7 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
 }
 .btn-update:hover    { background: var(--magenta2); }
 .btn-update:disabled { opacity: .5; cursor: default; }
-.btn-update-row { font-size: 11px; padding: 5px 12px; margin-left: 0; }
+.btn-update-row { font-size: 11px; padding: 5px 12px; margin-left: 0; border: 1.5px solid transparent; box-sizing: border-box; }
 .btn-update-row[data-outdated="0"] { background: var(--light); color: var(--grey); border: 1.5px solid var(--border); }
 .btn-update-row[data-outdated="0"]:hover { background: var(--light); color: var(--grey); }
 
