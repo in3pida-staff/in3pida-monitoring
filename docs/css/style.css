@@ -425,7 +425,7 @@ table.sites-table th {
     font-size: 11px; font-weight: 700; color: #999;
     background: #fafafa; border-bottom: 1px solid var(--border);
 }
-table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; }
+table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; vertical-align: middle; }
 table.sites-table td:last-child { white-space: nowrap; display: flex; gap: 6px; align-items: center; }
 table.sites-table tr:last-child td { border-bottom: none; }
 table.sites-table tbody tr { cursor: pointer; transition: background .12s; }
