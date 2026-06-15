@@ -67,6 +67,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('nav-plugin').addEventListener('click', loadPlugins);
     document.getElementById('nav-errors').addEventListener('click', loadErrors);
     document.getElementById('nav-users').addEventListener('click', loadUsers);
+    document.getElementById('nav-procedure').addEventListener('click', () => {
+        window.open('https://docs.google.com/document/d/1m06Z4Qtbomit8cjJyu7Ac7PvDnTgf2j6Nq3kzau43ac/edit?usp=drive_link', '_blank', 'noopener');
+    });
     document.getElementById('nav-info').addEventListener('click', () => {
         document.getElementById('info-overlay').style.display = 'flex';
     });
