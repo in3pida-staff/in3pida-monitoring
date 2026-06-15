@@ -195,7 +195,7 @@ async function loadPlugins(silent = false) {
     const [r1, r2, r3] = await Promise.all([
         _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
         _SBq.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
     ]);
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
@@ -484,10 +484,10 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()),
+        _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
         _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
         _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
-        _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()),
+        _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
         _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
     ]);
 
