@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await loadLatest();
     loadPlugins();
+    updateErrorBadge();
     setInterval(refresh, 60000);
 
     document.getElementById('nav-home').addEventListener('click', loadPlugins);
@@ -175,6 +176,7 @@ function setActiveNav(id) {
 }
 async function refresh() {
     await loadLatest();
+    updateErrorBadge();
     if      (currentView === 'plugins')              loadPlugins(true);
     else if (currentView === 'sites'  && currentPlugin) loadSites(currentPlugin, true);
     else if (currentView === 'site'   && currentSite)   loadSiteDetail(currentSite, true);
@@ -292,6 +294,24 @@ function pluginCardHtml(p) {
 }
 
 // ─── VIEW: ERRORI ─────────────────────────────────────────────────────────────
+async function updateErrorBadge() {
+    const badge = document.getElementById('err-badge');
+    if (!badge) return;
+    try {
+        const yesterday = new Date(Date.now() - 86400000);
+        const { data } = await _SBq.from('mon_integration_stats')
+            .select('site_id, integration, error_message')
+            .eq('status','error').gte('created_at', yesterday.toISOString());
+        // siti distinti con errore VERO (esclude CRM senza messaggio = CRM esterno, non un errore)
+        const sitesInError = new Set((data||[])
+            .filter(e => isValidRecord({ status:'error', error_message:e.error_message }, e.integration))
+            .map(e => e.site_id));
+        const n = sitesInError.size;
+        if (n > 0) { badge.textContent = n; badge.style.display = ''; }
+        else { badge.style.display = 'none'; }
+    } catch (e) { badge.style.display = 'none'; }
+}
+
 async function loadErrors(silent = false) {
     currentView = 'errors'; showView('errors'); setActiveNav('nav-errors');
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:'Siti con errori',active:true}]);
