@@ -393,7 +393,7 @@ async function loadSites(pluginName, silent = false) {
         { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
         { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
         { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: 'Ultima versione' },
+        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: li&&li.download_url?`Ultima versione · <a href="${li.download_url}" download style="color:var(--magenta);font-weight:700;text-decoration:none">↓ Scarica zip</a>`:'Ultima versione' },
     ]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
