@@ -361,8 +361,12 @@ body {
 .plugin-card.red    { border-left-color: var(--red); }
 
 .plugin-card-left { display: flex; flex-direction: column; gap: 10px; }
-.plugin-card-top  { display: flex; align-items: center; gap: 12px; }
+.plugin-card-top  { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .plugin-card-name { font-size: 20px; font-weight: 800; color: var(--dark); }
+.plugin-problem-badge { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+.plugin-problem-badge.err  { background: #d82d6b; color: #fff; animation: if2pulse 1.6s ease-in-out infinite; }
+.plugin-problem-badge.warn { background: #fff7ed; color: #c2660a; border: 1.5px solid #fed7aa; }
+@keyframes if2pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(216,45,107,.45); } 50% { box-shadow: 0 0 0 6px rgba(216,45,107,0); } }
 .plugin-card-versions {
     display: flex; gap: 6px; flex-wrap: wrap;
 }
