@@ -440,8 +440,8 @@ async function loadSites(pluginName, silent = false) {
         btnUpdateAll.addEventListener('click', async () => {
             const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
             if (!outdatedBtns.length) return;
-            const names = outdatedBtns.map(b => '• ' + (b.dataset.name || b.dataset.url || b.dataset.site)).join('\n');
-            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?\n\n${names}`))) return;
+            const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
+            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
             for (const btn of outdatedBtns) {
@@ -740,13 +740,13 @@ async function loadSiteDetail(siteId, silent = false) {
 }
 
 // Popup in stile in3pida (sostituisce if2Modal() nativo)
-function if2Modal(message) {
+function if2Modal(message, title = 'Avviso') {
     const old = document.getElementById('if2-modal-overlay');
     if (old) old.remove();
     const overlay = document.createElement('div');
     overlay.id = 'if2-modal-overlay';
     overlay.className = 'if2-modal-overlay';
-    overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><button class="if2-modal-ok">Ok</button></div>`;
+    overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><button class="if2-modal-ok">Ok</button></div></div>`;
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.querySelector('.if2-modal-ok').addEventListener('click', close);
@@ -755,14 +755,18 @@ function if2Modal(message) {
 }
 
 // Conferma in stile in3pida (sostituisce confirm() nativo). Ritorna Promise<boolean>.
-function if2Confirm(message) {
+// listItems: array opzionale (es. nomi siti) reso come lista scrollabile — regge 4 o 200 voci.
+function if2Confirm(message, title = 'Conferma', listItems = null) {
     return new Promise(resolve => {
         const old = document.getElementById('if2-modal-overlay');
         if (old) old.remove();
         const overlay = document.createElement('div');
         overlay.id = 'if2-modal-overlay';
         overlay.className = 'if2-modal-overlay';
-        overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><div class="if2-modal-actions"><button class="if2-modal-cancel">Annulla</button><button class="if2-modal-ok">Ok</button></div></div>`;
+        const listHtml = (listItems && listItems.length)
+            ? `<div class="if2-modal-list">${listItems.map(n => `<div class="if2-modal-list-item">${esc(String(n))}</div>`).join('')}</div>`
+            : '';
+        overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div>${listHtml}<div class="if2-modal-actions"><button class="if2-modal-cancel">Annulla</button><button class="if2-modal-ok">Ok</button></div></div></div>`;
         document.body.appendChild(overlay);
         const done = (val) => { overlay.remove(); resolve(val); };
         overlay.querySelector('.if2-modal-ok').addEventListener('click', () => done(true));
@@ -774,7 +778,7 @@ function if2Confirm(message) {
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
-    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.'))) return;
+    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
