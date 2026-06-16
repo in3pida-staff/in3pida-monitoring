@@ -495,6 +495,24 @@ function siteRowHtml(s) {
     </tr>`;
 }
 
+// Applica un'impostazione DAVVERO sul plugin del sito, con retry e verifica.
+// Usa body form-urlencoded = richiesta "semplice" → nessun preflight CORS dal browser.
+// Ritorna true solo se il plugin conferma {success:true}.
+async function setPluginConfig(url, apiKey, key, value) {
+    if (!url || !apiKey) return false;
+    const endpoint = url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config';
+    const body = new URLSearchParams({ api_key: apiKey, key: key, value: String(value) });
+    for (let i = 0; i < 2; i++) {
+        try {
+            const resp = await fetch(endpoint, { method: 'POST', body });
+            const json = await resp.json().catch(() => ({}));
+            if (resp.ok && json && json.success) return true;
+        } catch (e) {}
+        if (i === 0) await new Promise(r => setTimeout(r, 700)); // breve attesa prima del retry
+    }
+    return false;
+}
+
 // ─── VIEW: DETTAGLIO SITO ─────────────────────────────────────────────────────
 async function loadSiteDetail(siteId, silent = false) {
     currentSite = siteId; currentView = 'site'; showView('site');
@@ -651,21 +669,14 @@ async function loadSiteDetail(siteId, silent = false) {
     el.querySelectorAll('.btn-enable-crm').forEach(btn => {
         btn.addEventListener('click', async () => {
             btn.textContent = 'Attivazione...'; btn.disabled = true;
-            try {
-                const resp = await fetch(btn.dataset.url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: btn.dataset.apikey, key: 'if2_has_crm_override', value: 1 }),
-                });
-                const json = await resp.json().catch(() => ({}));
-                if (resp.ok && json.success) {
-                    btn.textContent = 'CRM attivato!';
-                    btn.style.background = 'var(--cyan)';
-                    setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
-                } else {
-                    btn.textContent = 'Errore'; btn.disabled = false;
-                }
-            } catch { btn.textContent = 'Errore connessione'; btn.disabled = false; }
+            const ok = await setPluginConfig(btn.dataset.url, btn.dataset.apikey, 'if2_has_crm_override', 1);
+            if (ok) {
+                btn.textContent = 'CRM attivato!';
+                btn.style.background = 'var(--cyan)';
+                setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
+            } else {
+                btn.textContent = 'Errore: sito non raggiungibile'; btn.disabled = false;
+            }
         });
     });
 
@@ -678,48 +689,48 @@ async function loadSiteDetail(siteId, silent = false) {
             const apiKey = btn.dataset.apikey;
             const nowOn  = value === 1; // nuovo stato dopo il click
 
-            // Aggiornamento visivo immediato
-            btn.style.background    = nowOn ? 'var(--cyan)' : 'var(--magenta)';
-            btn.style.pointerEvents = 'none';
-            const knob = btn.querySelector('span');
-            if (knob) knob.style.left = nowOn ? '21px' : '3px';
+            const knob       = btn.querySelector('span');
             const stateLabel = btn.parentElement.querySelector('span:first-child');
-            if (stateLabel) { stateLabel.textContent = nowOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = nowOn ? 'var(--cyan)' : 'var(--magenta)'; }
-            btn.dataset.value = nowOn ? 0 : 1;
+            const setVisual = (isOn) => {
+                btn.style.background = isOn ? 'var(--cyan)' : 'var(--magenta)';
+                if (knob) knob.style.left = isOn ? '21px' : '3px';
+                if (stateLabel) { stateLabel.textContent = isOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = isOn ? 'var(--cyan)' : 'var(--magenta)'; }
+            };
 
+            // Stato visivo ottimistico
+            setVisual(nowOn);
+            btn.style.pointerEvents = 'none';
+
+            // 1) Applica PRIMA al plugin (il plugin è la fonte di verità). Con retry.
+            const keys = key === '__semafori__'
+                ? ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']
+                : [key];
+            let applied = true;
+            for (const k of keys) {
+                if (!(await setPluginConfig(url, apiKey, k, value))) { applied = false; break; }
+            }
+
+            if (!applied) {
+                // Comando NON arrivato al sito → ripristina, avvisa, NON tocca Supabase (niente disallineamento)
+                setVisual(!nowOn);
+                btn.dataset.value = value;
+                btn.style.pointerEvents = '';
+                alert('⚠ Impostazione NON applicata: il sito non ha risposto (forse offline).\nRiprova quando è online.');
+                return;
+            }
+
+            // 2) Plugin confermato → allinea Supabase (così lo stato mostrato è sempre quello vero)
             try {
                 if (key === '__semafori__') {
-                    const {error: sbErr} = await _SBq.from('mon_sites').update({feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn}).eq('site_id', sid);
-                    if (sbErr) throw new Error(sbErr.message);
-                    if (url && apiKey) {
-                        for (const k of ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']) {
-                            fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                                method: 'POST', headers: {'Content-Type':'application/json'},
-                                body: JSON.stringify({ api_key: apiKey, key: k, value }),
-                            }).catch(()=>{});
-                        }
-                    }
+                    await _SBq.from('mon_sites').update({ feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn }).eq('site_id', sid);
                 } else {
                     const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_date_chiuse:'feature_date_chiuse',if2_feature_minimum_stay:'feature_minimum_stay'}[key];
-                    if (sbKey) { const {error:e} = await _SBq.from('mon_sites').update({[sbKey]: nowOn}).eq('site_id', sid); if(e) throw new Error(e.message); }
-                    if (url && apiKey) {
-                        fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
-                            method: 'POST', headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ api_key: apiKey, key, value }),
-                        }).catch(()=>{});
-                    }
+                    if (sbKey) await _SBq.from('mon_sites').update({ [sbKey]: nowOn }).eq('site_id', sid);
                 }
-            } catch(err) {
-                // Ripristina stato precedente in caso di errore
-                const wasOn = !nowOn;
-                btn.style.background = wasOn ? 'var(--cyan)' : 'var(--magenta)';
-                if (knob) knob.style.left = wasOn ? '21px' : '3px';
-                if (stateLabel) { stateLabel.textContent = wasOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = wasOn ? 'var(--cyan)' : 'var(--magenta)'; }
-                btn.dataset.value = value;
-                console.error('Toggle error:', err.message);
-            } finally {
-                btn.style.pointerEvents = '';
-            }
+            } catch (e) { /* il plugin è già a posto: Supabase è solo lo specchio */ }
+
+            btn.dataset.value = nowOn ? 0 : 1;
+            btn.style.pointerEvents = '';
         });
     });
 
