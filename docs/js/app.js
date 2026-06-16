@@ -796,7 +796,13 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
             btn.style.color = 'white';
-            if2Modal('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
+            let msg;
+            if (resp.status === 404 || json.code === 'rest_no_route') {
+                msg = 'Aggiornamento da remoto non disponibile su questo sito: il plugin è disattivato o troppo vecchio.\nVai in WordPress del sito → Plugin → attivalo o caricalo a mano.';
+            } else {
+                msg = 'Errore aggiornamento: ' + (json.error || json.message || 'Risposta non valida dal server');
+            }
+            if2Modal(msg);
             setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
         }
     } catch (e) {
