@@ -775,8 +775,8 @@ select.profile-input:focus, .profile-input select:focus { border-color: var(--ma
 }
 .if2-modal-card {
     background: var(--white); border-radius: var(--radius);
-    box-shadow: var(--shadow-lg); padding: 26px 28px 22px;
-    max-width: 520px; width: 100%; text-align: center;
+    box-shadow: var(--shadow-lg); padding: 28px 32px 24px;
+    width: 440px; max-width: calc(100vw - 32px); text-align: center;
     font-family: var(--font);
 }
 .if2-modal-msg { font-size: 14px; color: var(--dark); line-height: 1.5; margin-bottom: 20px; overflow-wrap: anywhere; }
