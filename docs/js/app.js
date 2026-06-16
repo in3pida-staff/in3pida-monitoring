@@ -440,7 +440,7 @@ async function loadSites(pluginName, silent = false) {
         btnUpdateAll.addEventListener('click', async () => {
             const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
             if (!outdatedBtns.length) return;
-            if (!confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`)) return;
+            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
             for (const btn of outdatedBtns) {
@@ -753,9 +753,26 @@ function if2Modal(message) {
     document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc); } });
 }
 
+// Conferma in stile in3pida (sostituisce confirm() nativo). Ritorna Promise<boolean>.
+function if2Confirm(message) {
+    return new Promise(resolve => {
+        const old = document.getElementById('if2-modal-overlay');
+        if (old) old.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'if2-modal-overlay';
+        overlay.className = 'if2-modal-overlay';
+        overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><div class="if2-modal-actions"><button class="if2-modal-cancel">Annulla</button><button class="if2-modal-ok">Ok</button></div></div>`;
+        document.body.appendChild(overlay);
+        const done = (val) => { overlay.remove(); resolve(val); };
+        overlay.querySelector('.if2-modal-ok').addEventListener('click', () => done(true));
+        overlay.querySelector('.if2-modal-cancel').addEventListener('click', () => done(false));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(false); });
+    });
+}
+
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
-    if (!skipConfirm && !confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
+    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.'))) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
@@ -991,7 +1008,7 @@ function openEditUser(id) {
 }
 
 async function deleteUser(id, name) {
-    if (!confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`)) return;
+    if (!(await if2Confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`))) return;
     const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
     if (error) { if2Modal('Errore: ' + error.message); return; }
     loadUsers();

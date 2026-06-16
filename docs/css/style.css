@@ -787,3 +787,11 @@ select.profile-input:focus, .profile-input select:focus { border-color: var(--ma
     cursor: pointer; transition: background .15s;
 }
 .if2-modal-ok:hover { background: var(--magenta2); }
+.if2-modal-actions { display: flex; gap: 10px; justify-content: center; }
+.if2-modal-cancel {
+    background: var(--light); color: var(--grey); border: 1.5px solid var(--border);
+    border-radius: var(--radius); font-family: var(--font);
+    font-size: 14px; font-weight: 700; padding: 10px 24px;
+    cursor: pointer; transition: background .15s;
+}
+.if2-modal-cancel:hover { background: #e6e6ee; }
