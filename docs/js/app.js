@@ -440,7 +440,8 @@ async function loadSites(pluginName, silent = false) {
         btnUpdateAll.addEventListener('click', async () => {
             const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
             if (!outdatedBtns.length) return;
-            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`))) return;
+            const names = outdatedBtns.map(b => '• ' + (b.dataset.name || b.dataset.url || b.dataset.site)).join('\n');
+            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?\n\n${names}`))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
             for (const btn of outdatedBtns) {
@@ -490,7 +491,7 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
         <td style="white-space:nowrap"><div class="row-actions">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </div></td>
     </tr>`;
 }
@@ -772,7 +773,8 @@ function if2Confirm(message) {
 
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
-    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.'))) return;
+    const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
+    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.'))) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
