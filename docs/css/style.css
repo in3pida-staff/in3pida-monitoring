@@ -645,12 +645,16 @@ table.sites-table tbody tr:hover td { background: #fdf0f5; }
     background: var(--white); border-radius: var(--radius);
     box-shadow: var(--shadow-lg);
     width: 100%; max-width: 460px;
-    padding: 24px 28px;
+    padding: 0; overflow: hidden;
 }
 .ping-header {
     display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 16px;
+    padding: 18px 26px 15px;
+    background: #fafafa;
+    border-bottom: 1px solid #f0f0f4;
+    margin-bottom: 0;
 }
+.ping-body { padding: 6px 26px 20px; }
 .ping-title { font-size: 16px; font-weight: 800; }
 .ping-close {
     background: none; border: none; font-size: 16px; cursor: pointer;

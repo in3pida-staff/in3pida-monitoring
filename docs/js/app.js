@@ -855,7 +855,7 @@ function showPingResult(name, d) {
         <div class="ping-row"><span style="color:var(--grey)">PHP</span><span style="margin-left:auto;font-weight:700">${esc(d.php_version||'—')}</span></div>
         <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
     }
-    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div>${body}</div>`;
+    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div><div class="ping-body">${body}</div></div>`;
     document.body.appendChild(modal);
     document.getElementById('ping-close').addEventListener('click', ()=>modal.remove());
     modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
