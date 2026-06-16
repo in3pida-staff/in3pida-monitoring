@@ -765,3 +765,25 @@ select.profile-input:focus, .profile-input select:focus { border-color: var(--ma
     .info-grid { grid-template-columns: 1fr; }
     .info-row:nth-child(odd) { border-right: none; }
 }
+
+/* ─── MODAL in3pida (sostituisce alert nativo) ───────────────────────────── */
+.if2-modal-overlay {
+    position: fixed; inset: 0; z-index: 100000;
+    background: rgba(20,20,30,.5);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+}
+.if2-modal-card {
+    background: var(--white); border-radius: var(--radius);
+    box-shadow: var(--shadow-lg); padding: 28px 30px 24px;
+    max-width: 420px; width: 100%; text-align: center;
+    font-family: var(--font);
+}
+.if2-modal-msg { font-size: 15px; color: var(--dark); line-height: 1.55; margin-bottom: 22px; }
+.if2-modal-ok {
+    background: var(--magenta); color: #fff; border: none;
+    border-radius: var(--radius); font-family: var(--font);
+    font-size: 14px; font-weight: 700; padding: 10px 30px;
+    cursor: pointer; transition: background .15s;
+}
+.if2-modal-ok:hover { background: var(--magenta2); }

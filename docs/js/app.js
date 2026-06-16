@@ -456,7 +456,7 @@ async function loadSites(pluginName, silent = false) {
         btn.addEventListener('click', async e => {
             e.stopPropagation();
             if (btn.dataset.outdated !== '1') {
-                alert('✓ Ultima versione già installata.');
+                if2Modal('✓ Ultima versione già installata.');
                 return;
             }
             await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
@@ -715,7 +715,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 setVisual(!nowOn);
                 btn.dataset.value = value;
                 btn.style.pointerEvents = '';
-                alert('⚠ Impostazione NON applicata: il sito non ha risposto (forse offline).\nRiprova quando è online.');
+                if2Modal('⚠ Impostazione NON applicata: il sito non ha risposto (forse offline).\nRiprova quando è online.');
                 return;
             }
 
@@ -738,6 +738,21 @@ async function loadSiteDetail(siteId, silent = false) {
     if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
 }
 
+// Popup in stile in3pida (sostituisce if2Modal() nativo)
+function if2Modal(message) {
+    const old = document.getElementById('if2-modal-overlay');
+    if (old) old.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'if2-modal-overlay';
+    overlay.className = 'if2-modal-overlay';
+    overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><button class="if2-modal-ok">Ok</button></div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.if2-modal-ok').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc); } });
+}
+
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
     if (!skipConfirm && !confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
@@ -746,8 +761,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
     try {
         const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: apiKey, download_url: downloadUrl }),
+            body: new URLSearchParams({ api_key: apiKey, download_url: downloadUrl }),
         });
         let json = {};
         try { json = await resp.json(); } catch {}
@@ -765,14 +779,14 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
             btn.style.color = 'white';
-            alert('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
+            if2Modal('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
             setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
         }
     } catch (e) {
         btn.textContent = 'Errore connessione';
         btn.style.background = 'var(--red, #ef4444)';
         btn.style.color = 'white';
-        alert('Impossibile contattare il sito:\n' + e.message);
+        if2Modal('Impossibile contattare il sito:\n' + e.message);
         setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
     }
 }
@@ -979,6 +993,6 @@ function openEditUser(id) {
 async function deleteUser(id, name) {
     if (!confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`)) return;
     const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
-    if (error) { alert('Errore: ' + error.message); return; }
+    if (error) { if2Modal('Errore: ' + error.message); return; }
     loadUsers();
 }
