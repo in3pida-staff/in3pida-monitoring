@@ -909,7 +909,10 @@ function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''
 function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
 function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
 function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
-function esc(str) { if(str===null||str===undefined)return''; return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// Decodifica le entità HTML (es. nomi sito salvati come "Golf&amp;Beach" da WordPress)
+const _if2DecEl = typeof document !== 'undefined' ? document.createElement('textarea') : null;
+function decodeEntities(s) { if(s===null||s===undefined)return''; if(!_if2DecEl)return String(s); _if2DecEl.innerHTML = String(s); return _if2DecEl.value; }
+function esc(str) { if(str===null||str===undefined)return''; str = decodeEntities(String(str)); return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function loadingHtml() { return '<div class="loading"><div class="spinner"></div> Caricamento...</div>'; }
 function errorHtml()   { return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>'; }
 function emptyHtml(title, sub) { return `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`; }
