@@ -374,6 +374,15 @@ async function loadSites(pluginName, silent = false) {
         recentStats = rs.data || [];
     }
 
+    // Totale richieste (form_submitted) per sito — conteggio esatto (head:true = solo il numero, non scarica le righe).
+    const totalReqMap = {};
+    if (siteIds.length > 0) {
+        const counts = await Promise.all(siteIds.map(id =>
+            _SBq.from('mon_events').select('*', { count: 'exact', head: true }).eq('site_id', id).eq('event_type', 'form_submitted')
+        ));
+        siteIds.forEach((id, i) => { totalReqMap[id] = (counts[i] && counts[i].count) || 0; });
+    }
+
     const lastReqMap = {};
     lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
     const integMap = {};
@@ -407,7 +416,7 @@ async function loadSites(pluginName, silent = false) {
             overallStatus = 'green';
             overallTooltip = 'Tutto ok';
         }
-        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integ };
+        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, total_requests: totalReqMap[s.site_id]||0, last_integ: integ };
     });
 
     const active = enriched.filter(s=>s.status==='green').length;
@@ -429,7 +438,7 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th style="white-space:nowrap">Ultima richiesta</th><th style="white-space:nowrap">Tot. richieste</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
@@ -484,7 +493,8 @@ function siteRowHtml(s) {
     return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
         <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
-        <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${s.last_request?timeAgo(s.last_request):'—'}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap;font-weight:700;text-align:center">${s.total_requests||0}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
         <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');if(s.feature_date_chiuse===false||s.feature_date_chiuse===0)off.push('Date chiuse');if(s.feature_minimum_stay===false||s.feature_minimum_stay===0)off.push('Min stay');if(s.feature_dot_db===false||s.feature_dot_db===0||s.feature_dot_crm===false||s.feature_dot_crm===0||s.feature_dot_amelia===false||s.feature_dot_amelia===0)off.push('Semafori');const TOT=6;if(!off.length)return '<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';if(off.length===TOT)return '<span style="color:var(--magenta);font-weight:700">Tutte OFF</span>';return '<span style="color:var(--magenta);font-weight:700">OFF: '+off.join(', ')+'</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
