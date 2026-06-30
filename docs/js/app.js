@@ -395,7 +395,9 @@ async function loadSites(pluginName, silent = false) {
     if (!silent) el.innerHTML = loadingHtml();
 
     const yesterday = new Date(Date.now() - 86400000);
-    const { data: sites } = await _SBq.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
+    // Ordinati per DATA DI INSTALLAZIONE (first_seen), non per ultima attività: la lista resta stabile
+    // e non si riordina in base all'ultimo hotel che ha ricevuto una richiesta.
+    const { data: sites } = await _SBq.from('mon_sites').select('*').eq('plugin_name', pluginName).order('first_seen',{ascending:true,nullsFirst:false});
     updateLatestVersions(sites);
     const siteIds = (sites||[]).map(s => s.site_id);
 
