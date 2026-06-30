@@ -438,6 +438,8 @@ table.sites-table th {
     background: #fafafa; border-bottom: 1px solid var(--border);
 }
 table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; vertical-align: middle; }
+/* Più sfondo bianco a destra: l'ultima colonna (azioni) non deve arrivare a filo del bordo */
+table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 32px; }
 table.sites-table td:last-child { white-space: nowrap; }
 .sites-table .row-actions { display: flex; gap: 6px; align-items: center; }
 table.sites-table tr:last-child td { border-bottom: none; }
