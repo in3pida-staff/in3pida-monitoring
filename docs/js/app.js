@@ -208,6 +208,18 @@ async function loadPlugins(silent = false) {
     updateLatestVersions(sites);
 
     const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
+    // Siti "FERMI": online ma senza richieste da > 24h pur avendone storico (background morto, come Golf 23/06).
+    // È un PROBLEMA da segnalare anche se non c'è un errore registrato (lì non arriva proprio nulla).
+    const lastSubmit = {};
+    (eventsAll || []).forEach(e => { if (!lastSubmit[e.site_id]) lastSubmit[e.site_id] = e.created_at; });
+    const SILENT_MS = 24 * 3600000;
+    const silentSites = new Set();
+    (sites || []).forEach(s => {
+        const hrs2 = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
+        const last = lastSubmit[s.site_id];
+        if (hrs2 < 25 && last && (now - new Date(last).getTime()) > SILENT_MS) silentSites.add(s.site_id);
+    });
+    const problemSites = new Set([...sitesWithErrors, ...silentSites]);
     const plugins = {};
     (sites || []).forEach(s => {
         const nm = s.plugin_name;
@@ -215,7 +227,7 @@ async function loadPlugins(silent = false) {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
         plugins[nm].total++;
         if (hrs < 25) plugins[nm].active++; else plugins[nm].inactive++;
-        if (sitesWithErrors.has(s.site_id)) plugins[nm].errors++;
+        if (problemSites.has(s.site_id)) plugins[nm].errors++;
         if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
     });
     Object.values(plugins).forEach(p => {
@@ -323,20 +335,43 @@ async function loadErrors(silent = false) {
     if (!silent) el.innerHTML = loadingHtml();
 
     const yesterday = new Date(Date.now() - 86400000);
-    const [{ data: errStats }, { data: allSites }] = await Promise.all([
+    const thirtyAgo = new Date(Date.now() - 30 * 86400000);
+    const [{ data: errStats }, { data: allSites }, { data: ev30 }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
-        _SBq.from('mon_sites').select('*')
+        _SBq.from('mon_sites').select('*'),
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
     (errStats||[]).forEach(e => { if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]}; bysite[e.site_id].errors.push(e); });
     const data = Object.values(bysite);
 
-    if (data.length === 0) {
+    // SILENZIO = ERRORE: sito online ma fermo da > 24h pur avendo storico richieste (la richiesta arriva e non entra niente).
+    const lastEv = {};
+    (ev30||[]).forEach(e => { if (!lastEv[e.site_id]) lastEv[e.site_id] = e.created_at; });
+    const silentSites = (allSites||[]).filter(s => {
+        const online = s.last_heartbeat && (Date.now() - new Date(s.last_heartbeat).getTime()) < 25 * 3600000;
+        const last = lastEv[s.site_id];
+        return online && last && (Date.now() - new Date(last).getTime()) > 86400000;
+    });
+
+    if (data.length === 0 && silentSites.length === 0) {
         el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>` + emptyHtml('Nessun errore nelle ultime 24h','Tutto funziona correttamente.');
         document.getElementById('back-err').addEventListener('click', loadPlugins); return;
     }
+    const silentHtml = silentSites.map(s => {
+        const hrsAgo = Math.floor((Date.now() - new Date(lastEv[s.site_id]).getTime()) / 3600000);
+        const ago = hrsAgo >= 48 ? Math.floor(hrsAgo / 24) + ' giorni' : hrsAgo + 'h';
+        return `<div class="card" style="margin-bottom:16px;border-left:4px solid #d82d6b">
+            <div class="card-header">
+                <div><span class="card-title">${esc(s.site_name||s.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s.site_url||'')}</span></div>
+                <button class="btn-detail" data-site="${esc(s.site_id)}">Vedi dettaglio →</button>
+            </div>
+            <div style="padding:4px 0"><div class="log-item"><span class="log-level error">fermo</span><span class="log-message"><strong>Non riceve richieste</strong> — il sito è online ma non entra nessuna richiesta da ${ago} (possibile background/integrazioni fermi, come Golf)</span><span class="log-time">silenzio</span></div></div>
+        </div>`;
+    }).join('');
     el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>
+    ${silentHtml}
     ${data.map(item => {
         const s = item.site; const eg = {};
         (item.errors||[]).forEach(e => { const k = e.integration+':'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
