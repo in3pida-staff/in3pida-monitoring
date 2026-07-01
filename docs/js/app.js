@@ -475,8 +475,8 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th style="white-space:nowrap">Ultima richiesta</th><th style="white-space:nowrap">Tot. richieste</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
-            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
+            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th style="white-space:nowrap">Ultima richiesta</th><th style="white-space:nowrap">Tot. richieste</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
