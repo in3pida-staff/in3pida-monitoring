@@ -434,7 +434,7 @@ body {
 /* La tabella (9 colonne) può essere più larga del riquadro: scorre orizzontalmente
    invece di essere TAGLIATA da .card (overflow:hidden). Il padding-right sul CONTENITORE
    garantisce SEMPRE lo spazio bianco a destra (sia se la tabella entra, sia se scorre). */
-.sites-scroll { overflow-x: auto; padding-right: 40px; }
+.sites-scroll { overflow-x: auto; padding-right: 72px; }
 table.sites-table { width: 100%; border-collapse: collapse; }
 table.sites-table th {
     text-align: left; padding: 12px 14px;
@@ -443,7 +443,7 @@ table.sites-table th {
 }
 table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; vertical-align: middle; }
 /* Più sfondo bianco a destra: l'ultima colonna (azioni) non deve arrivare a filo del bordo */
-table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 48px; }
+table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 20px; }
 table.sites-table td:last-child { white-space: nowrap; }
 .sites-table .row-actions { display: flex; gap: 6px; align-items: center; }
 table.sites-table tr:last-child td { border-bottom: none; }
@@ -772,7 +772,7 @@ select.profile-input:focus, .profile-input select:focus { border-color: var(--ma
     .navbar { padding: 0 16px; height: 64px; }
     .sw-stats { grid-template-columns: 1fr 1fr; }
     table.sites-table th, table.sites-table td { padding: 11px 14px; }
-    table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 48px; }
+    table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 20px; }
     .info-grid { grid-template-columns: 1fr; }
     .info-row:nth-child(odd) { border-right: none; }
 }
