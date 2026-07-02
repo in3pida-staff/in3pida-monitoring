@@ -437,20 +437,20 @@ body {
 .sites-scroll { overflow-x: auto; }
 table.sites-table { width: 100%; border-collapse: collapse; }
 table.sites-table th {
-    text-align: left; padding: 12px 14px;
+    text-align: left; padding: 11px 10px;
     font-size: 11px; font-weight: 700; color: #999;
     background: #fafafa; border-bottom: 1px solid var(--border);
 }
-table.sites-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f4f4f8; vertical-align: middle; }
+table.sites-table td { padding: 11px 10px; font-size: 13px; border-bottom: 1px solid #f4f4f8; vertical-align: middle; }
 /* Più sfondo bianco a destra: l'ultima colonna (azioni) non deve arrivare a filo del bordo */
-table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 60px; }
+table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 40px; }
 table.sites-table td:last-child { white-space: nowrap; }
 .sites-table .row-actions { display: flex; gap: 6px; align-items: center; }
 table.sites-table tr:last-child td { border-bottom: none; }
 table.sites-table tbody tr { cursor: pointer; transition: background .12s; }
 table.sites-table tbody tr:hover td { background: #fdf0f5; }
-.site-name-cell { font-weight: 600; font-size: 14px; }
-.site-url-cell  { color: var(--grey); font-size: 12px; margin-top: 3px; }
+.site-name-cell { font-weight: 600; font-size: 13px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-url-cell  { color: var(--grey); font-size: 11px; margin-top: 3px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─── DETAIL ─────────────────────────────────────────────────────────────── */
 .detail-grid {
@@ -772,7 +772,7 @@ select.profile-input:focus, .profile-input select:focus { border-color: var(--ma
     .navbar { padding: 0 16px; height: 64px; }
     .sw-stats { grid-template-columns: 1fr 1fr; }
     table.sites-table th, table.sites-table td { padding: 11px 14px; }
-    table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 60px; }
+    table.sites-table th:last-child, table.sites-table td:last-child { padding-right: 40px; }
     .info-grid { grid-template-columns: 1fr; }
     .info-row:nth-child(odd) { border-right: none; }
 }
