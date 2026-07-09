@@ -668,12 +668,13 @@ async function loadSiteDetail(siteId, silent = false) {
     const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
 
     // ─── Dati "Form e richieste" (card sopra il grafico) ───
+    const canonCh = c => { c=(c||'').trim(); return (c==='' || /^sito(\s*web)?$/i.test(c)) ? 'Sito' : c; };
     const reqEvents = (richEvents||[]).map(e => {
         const p = e.payload || {};
         return {
             form_id:   p.form_id!=null ? String(p.form_id) : '',
             form_name: p.form_name || '',
-            channel:   (p.channel || '').trim(),
+            channel:   canonCh(p.channel),
             ts:        new Date(e.created_at).getTime()
         };
     });
@@ -681,7 +682,7 @@ async function loadSiteDetail(siteId, silent = false) {
     const snapForms = (formSnap && formSnap[0] && formSnap[0].payload && formSnap[0].payload.forms) || [];
     snapForms.forEach(f => { formsInfo[String(f.id)] = { name: f.name || ('Form '+f.id), created: f.created_at }; });
     reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
-    const chLabel = c => c==='' ? 'Sito web' : c;
+    const chLabel = c => c;
     const channelsSet   = Array.from(new Set(reqEvents.map(r=>r.channel)));
     const formIdsSorted = Object.keys(formsInfo).sort((a,b)=>(formsInfo[b].created||'').localeCompare(formsInfo[a].created||''));
 
