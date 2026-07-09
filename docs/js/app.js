@@ -587,14 +587,14 @@ async function loadSiteDetail(siteId, silent = false) {
     if (se) { el.innerHTML = errorHtml(); return; }
 
     const ninetyAgo = new Date(now - 90 * 86400000);
-    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }, { data: siteForms }, { data: richEvents }] = await Promise.all([
+    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }, { data: formSnap }, { data: richEvents }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
         _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
         _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
-        _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
+        _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', weekAgo.toISOString()),
         _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
         _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted'),
-        _SBq.from('mon_forms').select('form_id, name, form_created_at').eq('site_id',siteId).order('form_created_at',{ascending:false}),
+        _SBq.from('mon_events').select('payload').eq('site_id',siteId).eq('event_type','forms_snapshot').order('created_at',{ascending:false}).limit(1),
         _SBq.from('mon_events').select('payload, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', ninetyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
     ]);
 
@@ -678,7 +678,8 @@ async function loadSiteDetail(siteId, silent = false) {
         };
     });
     const formsInfo = {};
-    (siteForms||[]).forEach(f => { formsInfo[String(f.form_id)] = { name: f.name || ('Form '+f.form_id), created: f.form_created_at }; });
+    const snapForms = (formSnap && formSnap[0] && formSnap[0].payload && formSnap[0].payload.forms) || [];
+    snapForms.forEach(f => { formsInfo[String(f.id)] = { name: f.name || ('Form '+f.id), created: f.created_at }; });
     reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
     const chLabel = c => c==='' ? 'Sito web' : c;
     const channelsSet   = Array.from(new Set(reqEvents.map(r=>r.channel)));
