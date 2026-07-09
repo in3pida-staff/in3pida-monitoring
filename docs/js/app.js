@@ -668,13 +668,11 @@ async function loadSiteDetail(siteId, silent = false) {
     const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
 
     // ─── Dati "Form e richieste" (card sopra il grafico) ───
-    const canonCh = c => { c=(c||'').trim(); return (c==='' || /^sito(\s*web)?$/i.test(c)) ? 'Sito' : c; };
     const reqEvents = (richEvents||[]).map(e => {
         const p = e.payload || {};
         return {
             form_id:   p.form_id!=null ? String(p.form_id) : '',
             form_name: p.form_name || '',
-            channel:   canonCh(p.channel),
             ts:        new Date(e.created_at).getTime()
         };
     });
@@ -682,12 +680,9 @@ async function loadSiteDetail(siteId, silent = false) {
     const snapForms = (formSnap && formSnap[0] && formSnap[0].payload && formSnap[0].payload.forms) || [];
     snapForms.forEach(f => { formsInfo[String(f.id)] = { name: f.name || ('Form '+f.id), created: f.created_at }; });
     reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
-    const chLabel = c => c;
-    const channelsSet   = Array.from(new Set(reqEvents.map(r=>r.channel)));
     const formIdsSorted = Object.keys(formsInfo).sort((a,b)=>(formsInfo[b].created||'').localeCompare(formsInfo[a].created||''));
 
     const formOpts = ['<option value="">Tutti i form</option>'].concat(formIdsSorted.map(id=>`<option value="${esc(id)}">${esc(formsInfo[id].name)}</option>`)).join('');
-    const chanOpts = ['<option value="__all__">Tutti i canali</option>'].concat(channelsSet.map(c=>`<option value="${esc(c)}">${esc(chLabel(c))}</option>`)).join('');
     const formsReqCard = `
         <div class="card" id="card-forms-req">
             <div class="card-header"><span class="card-title">Form e richieste</span><span style="font-size:12px;color:var(--grey)">${formIdsSorted.length} form • ultimi 90 giorni</span></div>
@@ -701,14 +696,13 @@ async function loadSiteDetail(siteId, silent = false) {
                         <button class="chart-toggle-btn" data-p="90">90 giorni</button>
                     </div>
                     <select id="req-form" class="req-select">${formOpts}</select>
-                    <select id="req-channel" class="req-select">${chanOpts}</select>
                 </div>
                 <div id="req-count" class="req-count"></div>
                 <div id="req-forms-table" style="margin-top:18px"></div>
             </div>
         </div>`;
 
-    // Ricalcolo lato client dei filtri (periodo/form/canale)
+    // Ricalcolo lato client dei filtri (periodo/form)
     const reqThreshold = p => {
         if (p==='today') { const d=new Date(); d.setHours(0,0,0,0); return {from:d.getTime(), to:Infinity}; }
         if (p==='yest')  { const end=new Date(); end.setHours(0,0,0,0); return {from:end.getTime()-86400000, to:end.getTime()}; }
@@ -718,13 +712,12 @@ async function loadSiteDetail(siteId, silent = false) {
     const renderReq = () => {
         const p     = document.querySelector('#req-period .chart-toggle-btn.active')?.dataset.p || '7';
         const fForm = document.getElementById('req-form').value;
-        const fChan = document.getElementById('req-channel').value;
         const {from,to} = reqThreshold(p);
         const inPeriod = reqEvents.filter(r => r.ts>=from && r.ts<to);
-        const filtered = inPeriod.filter(r => (fForm===''||r.form_id===fForm) && (fChan==='__all__'||r.channel===fChan));
+        const filtered = inPeriod.filter(r => (fForm===''||r.form_id===fForm));
         document.getElementById('req-count').innerHTML = `<span class="req-big">${filtered.length}</span><span class="req-big-label">richieste nel periodo selezionato</span>`;
         const byForm = {};
-        inPeriod.filter(r=>(fChan==='__all__'||r.channel===fChan)).forEach(r=>{ byForm[r.form_id]=(byForm[r.form_id]||0)+1; });
+        inPeriod.forEach(r=>{ byForm[r.form_id]=(byForm[r.form_id]||0)+1; });
         const rows = formIdsSorted.map(id=>({name:formsInfo[id].name, created:formsInfo[id].created, n:byForm[id]||0})).sort((a,b)=>b.n-a.n);
         document.getElementById('req-forms-table').innerHTML = rows.length
             ? `<table class="req-table"><thead><tr><th>Form</th><th>Creato il</th><th style="text-align:right">Richieste</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.created?fmtDate(r.created):'—'}</td><td style="text-align:right;font-weight:700">${r.n}</td></tr>`).join('')}</tbody></table>`
@@ -867,7 +860,6 @@ async function loadSiteDetail(siteId, silent = false) {
         b.classList.add('active'); renderReq();
     }));
     document.getElementById('req-form').addEventListener('change', renderReq);
-    document.getElementById('req-channel').addEventListener('change', renderReq);
     renderReq();
 
     const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
