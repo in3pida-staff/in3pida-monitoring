@@ -25,10 +25,20 @@ const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    const { data: { session } } = await _SB.auth.getSession();
-    if (!session) { window.location.href = 'login.html'; return; }
+    // Accesso diretto con password (bypassa Supabase Auth + Google, che possono essere rotti)
+    const gate = localStorage.getItem('if2_gate');
+    let session = null;
+    if (!gate) {
+        const r = await _SB.auth.getSession();
+        session = r.data.session;
+        if (!session) { window.location.href = 'login.html'; return; }
+    }
 
     let profile;
+    if (!session) {
+        // Sessione locale via password gate → profilo admin fisso
+        profile = { id: 'local-admin', email: 'mario@in3pida.it', full_name: 'Mario', role: 'admin', avatar_url: null };
+    } else {
     try {
         const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),2000));
         const profileRes = await Promise.race([
@@ -49,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             role: isAdmin ? 'admin' : 'user',
             avatar_url: session.user.user_metadata?.avatar_url || null
         };
+    }
     }
 
     currentProfile = profile;
@@ -80,7 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('click', () => { dropdown.style.display = 'none'; });
     dropdown.addEventListener('click', e => e.stopPropagation());
 
-    document.getElementById('dd-logout').addEventListener('click', async () => { await _SB.auth.signOut(); window.location.href = 'login.html'; });
+    document.getElementById('dd-logout').addEventListener('click', async () => { localStorage.removeItem('if2_gate'); try { await _SB.auth.signOut(); } catch(e){} window.location.href = 'login.html'; });
     document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
     const infoOverlay = document.getElementById('info-overlay');

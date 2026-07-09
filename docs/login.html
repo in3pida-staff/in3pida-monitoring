@@ -57,7 +57,12 @@
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w'
     );
 
+    // Accesso diretto con password (non passa da conferma email né Google)
+    const GATE_EMAIL = 'mario@in3pida.it';
+    const GATE_PW    = 'In3pida2026!';
+
     // Se già loggato → vai alla dashboard
+    if (localStorage.getItem('if2_gate')) window.location.href = 'index.html';
     _SB.auth.getSession().then(({ data: { session } }) => {
         if (session) window.location.href = 'index.html';
     });
@@ -74,6 +79,14 @@
         const btn = document.getElementById('btn-login');
         btn.textContent = '...'; btn.disabled = true;
         clearMsg();
+        const emailVal = document.getElementById('email').value.trim().toLowerCase();
+        const pwVal    = document.getElementById('password').value;
+        // Accesso diretto: se combaciano, entra subito senza Supabase Auth
+        if (emailVal === GATE_EMAIL && pwVal === GATE_PW) {
+            localStorage.setItem('if2_gate', 'ok');
+            window.location.href = 'index.html';
+            return;
+        }
         const { error } = await _SB.auth.signInWithPassword({
             email:    document.getElementById('email').value.trim(),
             password: document.getElementById('password').value,
