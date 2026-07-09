@@ -586,13 +586,16 @@ async function loadSiteDetail(siteId, silent = false) {
     const { data: site, error: se } = await _SBq.from('mon_sites').select('*').eq('site_id', siteId).single();
     if (se) { el.innerHTML = errorHtml(); return; }
 
-    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }] = await Promise.all([
+    const ninetyAgo = new Date(now - 90 * 86400000);
+    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }, { data: siteForms }, { data: richEvents }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
         _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
         _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
         _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
         _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
-        _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
+        _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted'),
+        _SBq.from('mon_forms').select('form_id, name, form_created_at').eq('site_id',siteId).order('form_created_at',{ascending:false}),
+        _SBq.from('mon_events').select('payload, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', ninetyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
     ]);
 
     const dailyCounts = {};
@@ -664,6 +667,68 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
 
+    // ─── Dati "Form e richieste" (card sopra il grafico) ───
+    const reqEvents = (richEvents||[]).map(e => {
+        const p = e.payload || {};
+        return {
+            form_id:   p.form_id!=null ? String(p.form_id) : '',
+            form_name: p.form_name || '',
+            channel:   (p.channel || '').trim(),
+            ts:        new Date(e.created_at).getTime()
+        };
+    });
+    const formsInfo = {};
+    (siteForms||[]).forEach(f => { formsInfo[String(f.form_id)] = { name: f.name || ('Form '+f.form_id), created: f.form_created_at }; });
+    reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
+    const chLabel = c => c==='' ? 'Sito web' : c;
+    const channelsSet   = Array.from(new Set(reqEvents.map(r=>r.channel)));
+    const formIdsSorted = Object.keys(formsInfo).sort((a,b)=>(formsInfo[b].created||'').localeCompare(formsInfo[a].created||''));
+
+    const formOpts = ['<option value="">Tutti i form</option>'].concat(formIdsSorted.map(id=>`<option value="${esc(id)}">${esc(formsInfo[id].name)}</option>`)).join('');
+    const chanOpts = ['<option value="__all__">Tutti i canali</option>'].concat(channelsSet.map(c=>`<option value="${esc(c)}">${esc(chLabel(c))}</option>`)).join('');
+    const formsReqCard = `
+        <div class="card" id="card-forms-req">
+            <div class="card-header"><span class="card-title">Form e richieste</span><span style="font-size:12px;color:var(--grey)">${formIdsSorted.length} form • ultimi 90 giorni</span></div>
+            <div style="padding:10px 26px 22px">
+                <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px">
+                    <div class="chart-toggle" id="req-period">
+                        <button class="chart-toggle-btn" data-p="today">Oggi</button>
+                        <button class="chart-toggle-btn" data-p="yest">Ieri</button>
+                        <button class="chart-toggle-btn active" data-p="7">7 giorni</button>
+                        <button class="chart-toggle-btn" data-p="30">30 giorni</button>
+                        <button class="chart-toggle-btn" data-p="90">90 giorni</button>
+                    </div>
+                    <select id="req-form" class="req-select">${formOpts}</select>
+                    <select id="req-channel" class="req-select">${chanOpts}</select>
+                </div>
+                <div id="req-count" class="req-count"></div>
+                <div id="req-forms-table" style="margin-top:18px"></div>
+            </div>
+        </div>`;
+
+    // Ricalcolo lato client dei filtri (periodo/form/canale)
+    const reqThreshold = p => {
+        if (p==='today') { const d=new Date(); d.setHours(0,0,0,0); return {from:d.getTime(), to:Infinity}; }
+        if (p==='yest')  { const end=new Date(); end.setHours(0,0,0,0); return {from:end.getTime()-86400000, to:end.getTime()}; }
+        const days = p==='7'?7:p==='30'?30:90;
+        return {from: now.getTime()-days*86400000, to:Infinity};
+    };
+    const renderReq = () => {
+        const p     = document.querySelector('#req-period .chart-toggle-btn.active')?.dataset.p || '7';
+        const fForm = document.getElementById('req-form').value;
+        const fChan = document.getElementById('req-channel').value;
+        const {from,to} = reqThreshold(p);
+        const inPeriod = reqEvents.filter(r => r.ts>=from && r.ts<to);
+        const filtered = inPeriod.filter(r => (fForm===''||r.form_id===fForm) && (fChan==='__all__'||r.channel===fChan));
+        document.getElementById('req-count').innerHTML = `<span class="req-big">${filtered.length}</span><span class="req-big-label">richieste nel periodo selezionato</span>`;
+        const byForm = {};
+        inPeriod.filter(r=>(fChan==='__all__'||r.channel===fChan)).forEach(r=>{ byForm[r.form_id]=(byForm[r.form_id]||0)+1; });
+        const rows = formIdsSorted.map(id=>({name:formsInfo[id].name, created:formsInfo[id].created, n:byForm[id]||0})).sort((a,b)=>b.n-a.n);
+        document.getElementById('req-forms-table').innerHTML = rows.length
+            ? `<table class="req-table"><thead><tr><th>Form</th><th>Creato il</th><th style="text-align:right">Richieste</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.created?fmtDate(r.created):'—'}</td><td style="text-align:right;font-weight:700">${r.n}</td></tr>`).join('')}</tbody></table>`
+            : `<div style="padding:14px 0;color:var(--grey);font-size:.85rem">Nessun form ancora registrato dal plugin. Comparirà dopo il primo aggiornamento/invio.</div>`;
+    };
+
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
         ${suggestions.length>0?`<div class="card">${suggestions.map(s=>`<div class="suggestion-item ${esc(s.level)}"><div class="suggestion-title">${esc(s.title)}</div><div class="suggestion-action">${esc(s.action)}</div></div>`).join('')}</div>`:''}
@@ -682,6 +747,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 </div>
             </div>
         </div>
+        ${formsReqCard}
         <div class="card">
             <div class="card-header"><span class="card-title">Richieste ricevute giorno per giorno</span>
             <div class="chart-toggle" id="sub-toggle"><button class="chart-toggle-btn active" data-range="7">7 giorni</button><button class="chart-toggle-btn" data-range="30">30 giorni</button></div></div>
@@ -792,6 +858,15 @@ async function loadSiteDetail(siteId, silent = false) {
             btn.style.pointerEvents = '';
         });
     });
+
+    // Filtri "Form e richieste"
+    document.querySelectorAll('#req-period .chart-toggle-btn').forEach(b => b.addEventListener('click', () => {
+        document.querySelectorAll('#req-period .chart-toggle-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active'); renderReq();
+    }));
+    document.getElementById('req-form').addEventListener('change', renderReq);
+    document.getElementById('req-channel').addEventListener('change', renderReq);
+    renderReq();
 
     const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
     if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
