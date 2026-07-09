@@ -82,7 +82,8 @@
         const emailVal = document.getElementById('email').value.trim().toLowerCase();
         const pwVal    = document.getElementById('password').value;
         // Accesso diretto: se combaciano, entra subito senza Supabase Auth
-        if (emailVal === GATE_EMAIL && pwVal === GATE_PW) {
+        const pwNorm = pwVal.trim().toLowerCase().replace(/[!\s]+$/,'');
+        if (emailVal === GATE_EMAIL && pwNorm === 'in3pida2026') {
             localStorage.setItem('if2_gate', 'ok');
             window.location.href = 'index.html';
             return;
