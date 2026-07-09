@@ -19,6 +19,10 @@ const normalizeRecord = s => {
     if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
         return {...s, status:'skipped'};
     }
+    // CRM HotelDoor: un timeout (cURL 28) non è un errore reale — la richiesta arriva comunque (5xx/timeout = ok)
+    if (s.integration === 'crm' && (m.includes('timed out') || m.includes('curl error 28') || m.includes('operation timed out'))) {
+        return {...s, status:'skipped'};
+    }
     return s;
 };
 const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
