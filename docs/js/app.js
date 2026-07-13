@@ -214,7 +214,7 @@ async function loadPlugins(silent = false) {
 
     const [r1, r2, r3] = await Promise.all([
         _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
-        _SBq.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
+        _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
         _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
     ]);
     const err = r1.error || r2.error || r3.error;
@@ -222,7 +222,9 @@ async function loadPlugins(silent = false) {
     const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
     updateLatestVersions(sites);
 
-    const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
+    const sitesWithErrors = new Set((errStats || [])
+        .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
+        .map(e => e.site_id));
     // Siti "FERMI": online ma senza richieste da > 24h pur avendone storico (background morto, come Golf 23/06).
     // È un PROBLEMA da segnalare anche se non c'è un errore registrato (lì non arriva proprio nulla).
     const lastSubmit = {};
@@ -332,9 +334,10 @@ async function updateErrorBadge() {
         const { data } = await _SBq.from('mon_integration_stats')
             .select('site_id, integration, error_message')
             .eq('status','error').gte('created_at', yesterday.toISOString());
-        // siti distinti con errore VERO (esclude CRM senza messaggio = CRM esterno, non un errore)
+        // siti distinti con errore VERO (esclude CRM senza messaggio = esterno, e timeout CRM/duplicati declassati)
         const sitesInError = new Set((data||[])
             .filter(e => isValidRecord({ status:'error', error_message:e.error_message }, e.integration))
+            .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
             .map(e => e.site_id));
         const n = sitesInError.size;
         if (n > 0) { badge.textContent = n; badge.style.display = ''; }
@@ -358,7 +361,13 @@ async function loadErrors(silent = false) {
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
-    (errStats||[]).forEach(e => { if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]}; bysite[e.site_id].errors.push(e); });
+    (errStats||[]).forEach(e => {
+        // Scarta ciò che non è un errore reale: timeout CRM (cURL 28) e duplicati vengono declassati da normalizeRecord
+        const n = normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message });
+        if (n.status !== 'error') return;
+        if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]};
+        bysite[e.site_id].errors.push(e);
+    });
     const data = Object.values(bysite);
 
     // SILENZIO = ERRORE: sito online ma fermo da > 24h pur avendo storico richieste (la richiesta arriva e non entra niente).
