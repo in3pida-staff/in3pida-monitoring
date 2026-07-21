@@ -480,6 +480,14 @@ async function loadSites(pluginName, silent = false) {
         return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, total_requests: totalReqMap[s.site_id]||0, last_integ: integ };
     });
 
+    // Ordinamento colonne (Ultima richiesta / Tot. richieste / Installato il). 1° click = decrescente
+    // (più richieste, data/richiesta più recente), 2° click = crescente. Stato persistito tra i refresh.
+    const _ss = (window.__sitesSort = window.__sitesSort || { key: null, dir: -1 });
+    const _sortVal = (s, k) => k === 'total_requests' ? (s.total_requests || 0) : (s[k] ? new Date(s[k]).getTime() : 0);
+    const applySitesSort = () => { if (_ss.key) enriched.sort((a, b) => (_sortVal(a, _ss.key) - _sortVal(b, _ss.key)) * _ss.dir); };
+    const _arrow = k => _ss.key === k ? (_ss.dir < 0 ? ' ▼' : ' ▲') : '';
+    const _th = (label, k) => `<th data-sort="${k}" data-label="${label}" style="white-space:nowrap;cursor:pointer;user-select:none" title="Ordina">${label}${_arrow(k)}</th>`;
+    applySitesSort();
     const active = enriched.filter(s=>s.status==='green').length;
     const inactive = enriched.filter(s=>s.status!=='green').length;
     const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
@@ -499,7 +507,7 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th style="white-space:nowrap">Ultima richiesta</th><th style="white-space:nowrap">Tot. richieste</th><th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>`;
 
@@ -522,6 +530,7 @@ async function loadSites(pluginName, silent = false) {
         });
     }
 
+    const attachRowHandlers = () => {
     el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping') || e.target.closest('.btn-update-row')) return; loadSiteDetail(row.dataset.siteId); }); });
     el.querySelectorAll('.btn-update-row').forEach(btn => {
         btn.addEventListener('click', async e => {
@@ -545,6 +554,17 @@ async function loadSites(pluginName, silent = false) {
             finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
         });
     });
+    };
+    attachRowHandlers();
+    // click sulle intestazioni ordinabili: ri-ordina e ridisegna solo il corpo tabella
+    el.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+        const k = th.dataset.sort;
+        if (_ss.key === k) _ss.dir = -_ss.dir; else { _ss.key = k; _ss.dir = -1; }
+        applySitesSort();
+        el.querySelector('.sites-table tbody').innerHTML = enriched.map(siteRowHtml).join('');
+        el.querySelectorAll('th[data-sort]').forEach(h => { h.innerHTML = h.dataset.label + _arrow(h.dataset.sort); });
+        attachRowHandlers();
+    }));
 }
 
 function siteRowHtml(s) {
