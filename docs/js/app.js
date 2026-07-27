@@ -522,9 +522,11 @@ async function loadSites(pluginName, silent = false) {
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
-            for (const btn of outdatedBtns) {
-                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true);
-            }
+            // In PARALLELO: un sito lento a rispondere non deve bloccare gli altri
+            // (col vecchio for sequenziale il primo sito appeso fermava tutti gli altri).
+            await Promise.all(outdatedBtns.map(btn =>
+                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
+            ));
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
