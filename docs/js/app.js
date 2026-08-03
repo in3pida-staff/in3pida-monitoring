@@ -2,8 +2,10 @@
 const _SBURL = 'https://yyauvoqjdzrbmebeafit.supabase.co';
 const _SBKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w';
 const _SB  = window.supabase.createClient(_SBURL, _SBKEY);
-// client separato senza auth per le query su tabelle senza RLS
-const _SBq = window.supabase.createClient(_SBURL, _SBKEY, { auth: { persistSession: false, autoRefreshToken: false } });
+// Tutte le query passano dal client AUTENTICATO: dopo il login le letture avvengono come
+// utente autenticato. Le tabelle sono protette da RLS, quindi la sola chiave pubblica non
+// legge/scrive nulla — serve una sessione valida.
+const _SBq = _SB;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 let currentView    = 'plugins';
@@ -29,20 +31,14 @@ const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    // Accesso diretto con password (bypassa Supabase Auth + Google, che possono essere rotti)
-    const gate = localStorage.getItem('if2_gate');
-    let session = null;
-    if (!gate) {
-        const r = await _SB.auth.getSession();
-        session = r.data.session;
-        if (!session) { window.location.href = 'login.html'; return; }
-    }
+    // Richiede SEMPRE una sessione Supabase autenticata: nessun bypass locale.
+    // (Il vecchio "gate" con password fissa in localStorage è stato rimosso perché aggirabile.)
+    localStorage.removeItem('if2_gate');
+    const r = await _SB.auth.getSession();
+    const session = r.data.session;
+    if (!session) { window.location.href = 'login.html'; return; }
 
     let profile;
-    if (!session) {
-        // Sessione locale via password gate → profilo admin fisso
-        profile = { id: 'local-admin', email: 'mario@in3pida.it', full_name: 'Mario', role: 'admin', avatar_url: null };
-    } else {
     try {
         const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),2000));
         const profileRes = await Promise.race([
@@ -63,7 +59,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             role: isAdmin ? 'admin' : 'user',
             avatar_url: session.user.user_metadata?.avatar_url || null
         };
-    }
     }
 
     currentProfile = profile;
