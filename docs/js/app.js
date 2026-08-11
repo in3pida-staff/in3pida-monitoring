@@ -397,13 +397,13 @@ async function loadErrors(silent = false) {
     ${silentHtml}
     ${data.map(item => {
         const s = item.site; const eg = {};
-        (item.errors||[]).forEach(e => { const k = e.integration+':'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
+        (item.errors||[]).forEach(e => { const k = e.integration+'\x00'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
         return `<div class="card" style="margin-bottom:16px">
             <div class="card-header">
                 <div><span class="card-title">${esc(s?.site_name||s?.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s?.site_url||'')}</span></div>
                 <button class="btn-detail" data-site="${esc(s?.site_id)}">Vedi dettaglio →</button>
             </div>
-            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const [integ,msg]=k.split(':'); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
+            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const sep=k.indexOf('\x00'); const integ=k.substring(0,sep); const msg=k.substring(sep+1); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
         </div>`;
     }).join('')}`;
     document.getElementById('back-err').addEventListener('click', loadPlugins);
@@ -691,6 +691,7 @@ async function loadSiteDetail(siteId, silent = false) {
     const allMessages = (logs||[]).map(l=>l.message||'');
     const suggestions = [];
     if (allMessages.some(m=>m.includes('BAD_CONTACT_MSISDN'))) suggestions.push({level:'error',title:'Numero di telefono non valido (Amelia)',action:'Amelia rifiuta il numero perché non è nel formato internazionale. Usa il campo telefono con validazione attiva.'});
+    if (allMessages.some(m=>m.includes('BAD_CONTACT_EMAIL'))) suggestions.push({level:'error',title:'Email non valida (Amelia)',action:'Amelia ha rifiutato l\'email del cliente. Verifica che il campo email nel form sia obbligatorio e di tipo CAMPO EMAIL (non testo).'});
     if (allMessages.some(m=>m.includes('PGRST204'))) suggestions.push({level:'error',title:'Colonna mancante in Supabase',action:'Il form cerca una colonna che non esiste. Verifica i nomi delle colonne nelle impostazioni del form → Supabase.'});
     if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:site.api_key&&latestDownloadUrl?`Usa il pulsante "Aggiorna ora" in Informazioni sito.`:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
 
