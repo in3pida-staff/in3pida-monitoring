@@ -34,8 +34,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Richiede SEMPRE una sessione Supabase autenticata: nessun bypass locale.
     // (Il vecchio "gate" con password fissa in localStorage è stato rimosso perché aggirabile.)
     localStorage.removeItem('if2_gate');
-    const r = await _SB.auth.getSession();
-    const session = r.data.session;
+    let session = (await _SB.auth.getSession()).data.session;
+    if (!session) {
+        // Token scaduto ma refresh token ancora valido → rinnoviamo senza chiedere login
+        const { data } = await _SB.auth.refreshSession().catch(() => ({ data: {} }));
+        session = data.session || null;
+    }
     if (!session) { window.location.href = 'login.html'; return; }
 
     let profile;
@@ -210,7 +214,7 @@ async function loadPlugins(silent = false) {
     const [r1, r2, r3] = await Promise.all([
         _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
     ]);
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
@@ -352,7 +356,7 @@ async function loadErrors(silent = false) {
     const [{ data: errStats }, { data: allSites }, { data: ev30 }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
         _SBq.from('mon_sites').select('*'),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
@@ -778,7 +782,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error:''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
