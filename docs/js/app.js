@@ -182,8 +182,10 @@ function latestInfo(pluginName) {
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
-    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
-    return { version, date, download_url: urls[pluginName] || '' };
+    const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip`;
+    const cdn_url = `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip`;
+    const urls = { 'in3pida-form-2': cdn_url };
+    return { version, date, download_url: urls[pluginName] || '', raw_url };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -610,9 +612,9 @@ async function loadSites(pluginName, silent = false) {
                 else { done++; setProgress(); }
             }));
 
-            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta con retry su 429.
+            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta con raw.githubusercontent.com.
             for (const btn of needsUrlBtns) {
-                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, null, true);
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
                 done++; setProgress();
             }
 
@@ -675,7 +677,7 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
         <td style="white-space:nowrap"><div class="row-actions">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </div></td>
     </tr>`;
 }
