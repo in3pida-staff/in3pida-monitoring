@@ -1,11 +1,8 @@
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
-const _SBURL = 'https://yyauvoqjdzrbmebeafit.supabase.co';
-const _SBKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w';
-const _SB  = window.supabase.createClient(_SBURL, _SBKEY);
-// Tutte le query passano dal client AUTENTICATO: dopo il login le letture avvengono come
-// utente autenticato. Le tabelle sono protette da RLS, quindi la sola chiave pubblica non
-// legge/scrive nulla — serve una sessione valida.
-const _SBq = _SB;
+const _SB = window.supabase.createClient(
+    'https://yyauvoqjdzrbmebeafit.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w'
+);
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 let currentView    = 'plugins';
@@ -21,48 +18,20 @@ const normalizeRecord = s => {
     if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
         return {...s, status:'skipped'};
     }
-    // CRM HotelDoor: un timeout (cURL 28) non è un errore reale — la richiesta arriva comunque (5xx/timeout = ok)
-    if (s.integration === 'crm' && (m.includes('timed out') || m.includes('curl error 28') || m.includes('operation timed out'))) {
-        return {...s, status:'skipped'};
-    }
     return s;
 };
 const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    // Richiede SEMPRE una sessione Supabase autenticata: nessun bypass locale.
-    // (Il vecchio "gate" con password fissa in localStorage è stato rimosso perché aggirabile.)
-    localStorage.removeItem('if2_gate');
-    let session = (await _SB.auth.getSession()).data.session;
-    if (!session) {
-        // Token scaduto ma refresh token ancora valido → rinnoviamo senza chiedere login
-        const { data } = await _SB.auth.refreshSession().catch(() => ({ data: {} }));
-        session = data.session || null;
-    }
+    const { data: { session } } = await _SB.auth.getSession();
     if (!session) { window.location.href = 'login.html'; return; }
 
-    let profile;
-    try {
-        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),2000));
-        const profileRes = await Promise.race([
-            _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(),
-            timeout
-        ]);
-        profile = profileRes?.data || null;
-    } catch(e) { profile = null; }
+    const { data: profile } = await _SB.from('mon_profiles').select('*').eq('id', session.user.id).single();
     if (!profile) {
-        // Fallback: costruisce profilo dai dati di sessione
-        const email = session.user.email || '';
-        const isAdmin = email === 'mario@in3pida.it' || session.user.user_metadata?.role === 'admin';
-        if (!email) { await _SB.auth.signOut(); window.location.href = 'login.html'; return; }
-        profile = {
-            id: session.user.id,
-            email,
-            full_name: session.user.user_metadata?.full_name || email.split('@')[0],
-            role: isAdmin ? 'admin' : 'user',
-            avatar_url: session.user.user_metadata?.avatar_url || null
-        };
+        await _SB.auth.signOut();
+        window.location.href = 'login.html?error=unauthorized';
+        return;
     }
 
     currentProfile = profile;
@@ -72,18 +41,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('nav-users').style.display = '';
     }
 
-    await loadLatest();
+    loadLatest();
     loadPlugins();
-    updateErrorBadge();
     setInterval(refresh, 60000);
 
     document.getElementById('nav-home').addEventListener('click', loadPlugins);
     document.getElementById('nav-plugin').addEventListener('click', loadPlugins);
     document.getElementById('nav-errors').addEventListener('click', loadErrors);
     document.getElementById('nav-users').addEventListener('click', loadUsers);
-    document.getElementById('nav-procedure').addEventListener('click', () => {
-        window.open('https://docs.google.com/document/d/1m06Z4Qtbomit8cjJyu7Ac7PvDnTgf2j6Nq3kzau43ac/edit?usp=drive_link', '_blank', 'noopener');
-    });
     document.getElementById('nav-info').addEventListener('click', () => {
         document.getElementById('info-overlay').style.display = 'flex';
     });
@@ -94,7 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('click', () => { dropdown.style.display = 'none'; });
     dropdown.addEventListener('click', e => e.stopPropagation());
 
-    document.getElementById('dd-logout').addEventListener('click', async () => { localStorage.removeItem('if2_gate'); try { await _SB.auth.signOut(); } catch(e){} window.location.href = 'login.html'; });
+    document.getElementById('dd-logout').addEventListener('click', async () => { await _SB.auth.signOut(); window.location.href = 'login.html'; });
     document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
     const infoOverlay = document.getElementById('info-overlay');
@@ -162,10 +127,8 @@ async function loadLatest() {
 function updateLatestVersions(sites) {
     (sites || []).forEach(s => {
         if (!s.plugin_version) return;
-        const cur = latestVersions[s.plugin_name];
-        const curVer = cur ? (typeof cur === 'object' ? cur.version : cur) : null;
-        if (!curVer || semverGt(s.plugin_version, curVer)) {
-            latestVersions[s.plugin_name] = { version: s.plugin_version, date: null };
+        if (!latestVersions[s.plugin_name] || semverGt(s.plugin_version, latestVersions[s.plugin_name])) {
+            latestVersions[s.plugin_name] = s.plugin_version;
         }
     });
 }
@@ -180,10 +143,8 @@ function semverGt(a, b) {
 function latestInfo(pluginName) {
     const v = latestVersions[pluginName];
     if (!v) return null;
-    const version = typeof v === 'object' ? v.version : v;
-    const date    = typeof v === 'object' ? v.date    : null;
-    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
-    return { version, date, download_url: urls[pluginName] || '' };
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${v}.zip` };
+    return { version: v, download_url: urls[pluginName] || '' };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -193,7 +154,6 @@ function setActiveNav(id) {
 }
 async function refresh() {
     await loadLatest();
-    updateErrorBadge();
     if      (currentView === 'plugins')              loadPlugins(true);
     else if (currentView === 'sites'  && currentPlugin) loadSites(currentPlugin, true);
     else if (currentView === 'site'   && currentSite)   loadSiteDetail(currentSite, true);
@@ -212,30 +172,16 @@ async function loadPlugins(silent = false) {
     const thirtyAgo = new Date(now - 30 * 86400000);
 
     const [r1, r2, r3] = await Promise.all([
-        _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
-        _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
+        _SB.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version, site_url, site_name'),
+        _SB.from('mon_integration_stats').select('site_id').eq('status', 'error').gte('created_at', yesterday.toISOString()),
+        _SB.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString())
     ]);
     const err = r1.error || r2.error || r3.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
     const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
     updateLatestVersions(sites);
 
-    const sitesWithErrors = new Set((errStats || [])
-        .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
-        .map(e => e.site_id));
-    // Siti "FERMI": online ma senza richieste da > 24h pur avendone storico (background morto, come Golf 23/06).
-    // È un PROBLEMA da segnalare anche se non c'è un errore registrato (lì non arriva proprio nulla).
-    const lastSubmit = {};
-    (eventsAll || []).forEach(e => { if (!lastSubmit[e.site_id]) lastSubmit[e.site_id] = e.created_at; });
-    const SILENT_MS = 24 * 3600000;
-    const silentSites = new Set();
-    (sites || []).forEach(s => {
-        const hrs2 = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
-        const last = lastSubmit[s.site_id];
-        if (hrs2 < 25 && last && (now - new Date(last).getTime()) > SILENT_MS) silentSites.add(s.site_id);
-    });
-    const problemSites = new Set([...sitesWithErrors, ...silentSites]);
+    const sitesWithErrors = new Set((errStats || []).map(e => e.site_id));
     const plugins = {};
     (sites || []).forEach(s => {
         const nm = s.plugin_name;
@@ -243,49 +189,71 @@ async function loadPlugins(silent = false) {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
         plugins[nm].total++;
         if (hrs < 25) plugins[nm].active++; else plugins[nm].inactive++;
-        if (problemSites.has(s.site_id)) plugins[nm].errors++;
+        if (sitesWithErrors.has(s.site_id)) plugins[nm].errors++;
         if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
     });
     Object.values(plugins).forEach(p => {
-        p.status = (p.errors > 0 && p.active > 0) ? 'red' : (p.active === 0) ? 'grey' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
+        p.status = (p.inactive > 0 && p.active === 0) ? 'red' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
     });
 
     const dailyGlobal = {};
     for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyGlobal[d.toISOString().slice(0,10)] = {}; }
     const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
+    // mappa site_id → label hotel (nome o url)
+    const siteLabel = {}; (sites || []).forEach(s => { siteLabel[s.site_id] = s.site_name || s.site_url || s.site_id; });
+    // conteggi giornalieri per singolo sito
+    const dailyPerSite = {};
+    for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyPerSite[d.toISOString().slice(0,10)] = {}; }
     (eventsAll || []).forEach(e => {
         const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
-        if (dailyGlobal[day] !== undefined) {
-            if (!dailyGlobal[day][pn]) dailyGlobal[day][pn] = new Set();
-            dailyGlobal[day][pn].add(e.site_id);
-        }
+        if (dailyGlobal[day] !== undefined) dailyGlobal[day][pn] = (dailyGlobal[day][pn] || 0) + 1;
+        if (dailyPerSite[day] !== undefined) dailyPerSite[day][e.site_id] = (dailyPerSite[day][e.site_id] || 0) + 1;
     });
     const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
-    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
+    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, counts]) => ({ date, count: counts[pn] || 0 })) }));
+    // siti che hanno avuto almeno 1 richiesta negli ultimi 30 giorni
+    const activeSiteIds = [...new Set((eventsAll || []).map(e => e.site_id))].sort((a,b) => (siteLabel[a]||'').localeCompare(siteLabel[b]||''));
 
     const list = Object.values(plugins);
     if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
 
     const active = list.reduce((s, p) => s + p.active, 0);
     const errors = list.reduce((s, p) => s + p.errors, 0);
-    const firstPlugin = pluginNames[0] || null;
     setHero('Monitoring', 'in3pida Monitoring', [
         { num: list.length, label: 'Plugin monitorati' },
-        { num: active,  label: 'Plugin attivi',    onclick: firstPlugin ? () => loadSites(firstPlugin) : null },
-        { num: errors,  label: 'Siti con errori',  onclick: loadErrors },
+        { num: active, label: 'Plugin attivi' },
+        { num: errors, label: 'Siti con errori', clickable: true, action: 'errors' }
     ]);
 
     el.innerHTML = `
         <p class="section-title">Plugin installati</p>
         <div class="plugins-grid">${list.map(pluginCardHtml).join('')}</div>
         ${dailySeries.length > 0 ? `<div class="card" style="margin-top:24px">
-            <div class="card-header"><span class="card-title">Installazioni con richieste</span>
+            <div class="card-header"><span class="card-title">Andamento richieste</span>
             <div class="chart-toggle" id="global-toggle">
                 <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
                 <button class="chart-toggle-btn" data-range="30">30 giorni</button>
             </div></div>
             <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
-        </div>` : ''}`;
+        </div>` : ''}
+        <div class="card" style="margin-top:24px">
+            <div class="card-header">
+                <span class="card-title">Compilazioni form giornaliere</span>
+                <select id="hotel-filter" style="font-family:inherit;font-size:12px;padding:4px 8px;border:1px solid #e8e8f0;border-radius:6px;color:#333;background:#fff;cursor:pointer">
+                    <option value="">— Tutti gli hotel —</option>
+                    ${activeSiteIds.map(sid => `<option value="${esc(sid)}">${esc(siteLabel[sid] || sid)}</option>`).join('')}
+                </select>
+            </div>
+            <div style="padding:0 26px 20px;overflow-x:auto">
+                <table id="daily-req-table" style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="border-bottom:2px solid #f0f0f0">
+                        <th style="text-align:left;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">DATA</th>
+                        <th style="text-align:right;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">RICHIESTE</th>
+                    </tr></thead>
+                    <tbody id="daily-req-body"></tbody>
+                </table>
+            </div>
+        </div>`;
 
     el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
     document.querySelectorAll('.sw-stat-card[data-action]').forEach(c => { c.style.cursor = 'pointer'; c.addEventListener('click', () => loadErrors()); });
@@ -301,18 +269,34 @@ async function loadPlugins(silent = false) {
         buildGC(7);
         document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
     }
+
+    // Tabella compilazioni giornaliere
+    const allDates = Object.keys(dailyPerSite).reverse(); // dal più recente
+    function buildDailyTable(filterSite) {
+        const tbody = document.getElementById('daily-req-body');
+        if (!tbody) return;
+        tbody.innerHTML = allDates.map(date => {
+            const counts = dailyPerSite[date] || {};
+            const total = filterSite
+                ? (counts[filterSite] || 0)
+                : Object.values(counts).reduce((s,v)=>s+v,0);
+            const label = new Date(date).toLocaleDateString('it-IT',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+            return `<tr style="border-bottom:1px solid #f5f5f8">
+                <td style="padding:9px 8px;color:#333">${esc(label)}</td>
+                <td style="padding:9px 8px;text-align:right;font-weight:${total>0?'700':'400'};color:${total>0?'#d82d6b':'#bbb'}">${total}</td>
+            </tr>`;
+        }).join('');
+    }
+    buildDailyTable('');
+    const hotelFilter = document.getElementById('hotel-filter');
+    if (hotelFilter) hotelFilter.addEventListener('change', () => buildDailyTable(hotelFilter.value));
 }
 
 function pluginCardHtml(p) {
     const pills = Object.entries(p.versions||{}).map(([v,c]) => `<span class="version-pill">v${esc(v)}${c>1?' ×'+c:''}</span>`).join('') || '<span class="version-pill">—</span>';
-    const problemBadge = p.errors > 0
-        ? `<span class="plugin-problem-badge err">⚠ ${p.errors} ${p.errors === 1 ? 'sito con problema' : 'siti con problemi'}</span>`
-        : p.inactive > 0
-        ? `<span class="plugin-problem-badge warn">⚠ ${p.inactive} senza segnale</span>`
-        : '';
     return `<div class="plugin-card ${esc(p.status)}" data-name="${esc(p.name)}">
         <div class="plugin-card-left">
-            <div class="plugin-card-top">${dot(p.status,true)}<div class="plugin-card-name">${esc(displayName(p.name))}</div>${problemBadge}</div>
+            <div class="plugin-card-top">${dot(p.status,true)}<div class="plugin-card-name">${esc(displayName(p.name))}</div></div>
             <div class="plugin-card-versions">${pills}</div>
         </div>
         <div class="plugin-card-right">
@@ -325,25 +309,6 @@ function pluginCardHtml(p) {
 }
 
 // ─── VIEW: ERRORI ─────────────────────────────────────────────────────────────
-async function updateErrorBadge() {
-    const badge = document.getElementById('err-badge');
-    if (!badge) return;
-    try {
-        const yesterday = new Date(Date.now() - 86400000);
-        const { data } = await _SBq.from('mon_integration_stats')
-            .select('site_id, integration, error_message')
-            .eq('status','error').gte('created_at', yesterday.toISOString());
-        // siti distinti con errore VERO (esclude CRM senza messaggio = esterno, e timeout CRM/duplicati declassati)
-        const sitesInError = new Set((data||[])
-            .filter(e => isValidRecord({ status:'error', error_message:e.error_message }, e.integration))
-            .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
-            .map(e => e.site_id));
-        const n = sitesInError.size;
-        if (n > 0) { badge.textContent = n; badge.style.display = ''; }
-        else { badge.style.display = 'none'; }
-    } catch (e) { badge.style.display = 'none'; }
-}
-
 async function loadErrors(silent = false) {
     currentView = 'errors'; showView('errors'); setActiveNav('nav-errors');
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:'Siti con errori',active:true}]);
@@ -352,58 +317,29 @@ async function loadErrors(silent = false) {
     if (!silent) el.innerHTML = loadingHtml();
 
     const yesterday = new Date(Date.now() - 86400000);
-    const thirtyAgo = new Date(Date.now() - 30 * 86400000);
-    const [{ data: errStats }, { data: allSites }, { data: ev30 }] = await Promise.all([
-        _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
-        _SBq.from('mon_sites').select('*'),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
+    const [{ data: errStats }, { data: allSites }] = await Promise.all([
+        _SB.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
+        _SB.from('mon_sites').select('*')
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
-    (errStats||[]).forEach(e => {
-        // Scarta ciò che non è un errore reale: timeout CRM (cURL 28) e duplicati vengono declassati da normalizeRecord
-        const n = normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message });
-        if (n.status !== 'error') return;
-        if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]};
-        bysite[e.site_id].errors.push(e);
-    });
+    (errStats||[]).forEach(e => { if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]}; bysite[e.site_id].errors.push(e); });
     const data = Object.values(bysite);
 
-    // SILENZIO = ERRORE: sito online ma fermo da > 24h pur avendo storico richieste (la richiesta arriva e non entra niente).
-    const lastEv = {};
-    (ev30||[]).forEach(e => { if (!lastEv[e.site_id]) lastEv[e.site_id] = e.created_at; });
-    const silentSites = (allSites||[]).filter(s => {
-        const online = s.last_heartbeat && (Date.now() - new Date(s.last_heartbeat).getTime()) < 25 * 3600000;
-        const last = lastEv[s.site_id];
-        return online && last && (Date.now() - new Date(last).getTime()) > 86400000;
-    });
-
-    if (data.length === 0 && silentSites.length === 0) {
+    if (data.length === 0) {
         el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>` + emptyHtml('Nessun errore nelle ultime 24h','Tutto funziona correttamente.');
         document.getElementById('back-err').addEventListener('click', loadPlugins); return;
     }
-    const silentHtml = silentSites.map(s => {
-        const hrsAgo = Math.floor((Date.now() - new Date(lastEv[s.site_id]).getTime()) / 3600000);
-        const ago = hrsAgo >= 48 ? Math.floor(hrsAgo / 24) + ' giorni' : hrsAgo + 'h';
-        return `<div class="card" style="margin-bottom:16px;border-left:4px solid #d82d6b">
-            <div class="card-header">
-                <div><span class="card-title">${esc(s.site_name||s.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s.site_url||'')}</span></div>
-                <button class="btn-detail" data-site="${esc(s.site_id)}">Vedi dettaglio →</button>
-            </div>
-            <div style="padding:4px 0"><div class="log-item"><span class="log-level error">fermo</span><span class="log-message"><strong>Non riceve richieste</strong> — il sito è online ma non entra nessuna richiesta da ${ago} (possibile background/integrazioni fermi, come Golf)</span><span class="log-time">silenzio</span></div></div>
-        </div>`;
-    }).join('');
     el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>
-    ${silentHtml}
     ${data.map(item => {
         const s = item.site; const eg = {};
-        (item.errors||[]).forEach(e => { const k = e.integration+'\x00'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
+        (item.errors||[]).forEach(e => { const k = e.integration+':'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
         return `<div class="card" style="margin-bottom:16px">
             <div class="card-header">
                 <div><span class="card-title">${esc(s?.site_name||s?.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s?.site_url||'')}</span></div>
                 <button class="btn-detail" data-site="${esc(s?.site_id)}">Vedi dettaglio →</button>
             </div>
-            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const sep=k.indexOf('\x00'); const integ=k.substring(0,sep); const msg=k.substring(sep+1); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
+            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const [integ,msg]=k.split(':'); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
         </div>`;
     }).join('')}`;
     document.getElementById('back-err').addEventListener('click', loadPlugins);
@@ -418,87 +354,34 @@ async function loadSites(pluginName, silent = false) {
     if (!silent) el.innerHTML = loadingHtml();
 
     const yesterday = new Date(Date.now() - 86400000);
-    // Ordinati per DATA DI INSTALLAZIONE (first_seen), non per ultima attività: la lista resta stabile
-    // e non si riordina in base all'ultimo hotel che ha ricevuto una richiesta.
-    const { data: sites } = await _SBq.from('mon_sites').select('*').eq('plugin_name', pluginName).order('first_seen',{ascending:true,nullsFirst:false});
+    const { data: sites } = await _SB.from('mon_sites').select('*').eq('plugin_name', pluginName).order('last_heartbeat',{ascending:false});
     updateLatestVersions(sites);
     const siteIds = (sites||[]).map(s => s.site_id);
 
     let lastEvents = [], recentStats = [];
     if (siteIds.length > 0) {
         const [le, rs] = await Promise.all([
-            _SBq.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
-            _SBq.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
+            _SB.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
+            _SB.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
         ]);
         lastEvents = le.data || [];
         recentStats = rs.data || [];
     }
 
-    // Totale richieste (form_submitted) per sito — conteggio esatto (head:true = solo il numero, non scarica le righe).
-    const totalReqMap = {};
-    if (siteIds.length > 0) {
-        const counts = await Promise.all(siteIds.map(id =>
-            _SBq.from('mon_events').select('*', { count: 'exact', head: true }).eq('site_id', id).eq('event_type', 'form_submitted')
-        ));
-        siteIds.forEach((id, i) => { totalReqMap[id] = (counts[i] && counts[i].count) || 0; });
-    }
-
     const lastReqMap = {};
     lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
     const integMap = {};
-    const errorSetMap = {};
-    recentStats.forEach(raw => {
-        const s = normalizeRecord(raw);
-        if (!integMap[s.site_id]) integMap[s.site_id]={};
-        if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status;
-        if (s.status === 'error') {
-            if (!errorSetMap[s.site_id]) errorSetMap[s.site_id] = new Set();
-            errorSetMap[s.site_id].add(s.integration);
-        }
-    });
+    recentStats.forEach(raw => { const s = normalizeRecord(raw); if (!integMap[s.site_id]) integMap[s.site_id]={}; if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status; });
 
     const now = new Date();
-    const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
     const enriched = (sites||[]).map(s => {
         const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
-        const heartbeatStatus = hrs<25?'green':'grey';
-        const integ = integMap[s.site_id] || {};
-        // Usa lo stato più recente per ogni integrazione (recupero immediato quando errore risolto)
-        const integErrors = ['supabase','crm','amelia'].filter(k => integ[k] === 'error');
-        let overallStatus, overallTooltip;
-        if (heartbeatStatus !== 'green') {
-            overallStatus = 'grey';
-            overallTooltip = hrs > 168 ? 'Plugin probabilmente disinstallato' : `Nessun segnale da ${Math.round(hrs)}h`;
-        } else if (integErrors.length > 0) {
-            overallStatus = 'red';
-            overallTooltip = 'Errore: ' + integErrors.map(k => integLabelsShort[k]).join(', ');
-        } else {
-            overallStatus = 'green';
-            overallTooltip = 'Tutto ok';
-        }
-        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, total_requests: totalReqMap[s.site_id]||0, last_integ: integ };
+        return { ...s, status: hrs<25?'green':hrs<48?'yellow':'red', hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, last_integ: integMap[s.site_id]||{} };
     });
 
-    // Ordinamento colonne (Ultima richiesta / Tot. richieste / Installato il). 1° click = decrescente
-    // (più richieste, data/richiesta più recente), 2° click = crescente. Stato persistito tra i refresh.
-    const _ss = (window.__sitesSort = window.__sitesSort || { key: null, dir: -1 });
-    const _sortVal = (s, k) => k === 'total_requests' ? (s.total_requests || 0) : (s[k] ? new Date(s[k]).getTime() : 0);
-    const applySitesSort = () => { if (_ss.key) enriched.sort((a, b) => (_sortVal(a, _ss.key) - _sortVal(b, _ss.key)) * _ss.dir); };
-    const _arrow = k => _ss.key === k ? (_ss.dir < 0 ? ' ▼' : ' ▲') : '';
-    const _th = (label, k) => `<th data-sort="${k}" data-label="${label}" style="white-space:nowrap;cursor:pointer;user-select:none" title="Ordina">${label}${_arrow(k)}</th>`;
-    applySitesSort();
     const active = enriched.filter(s=>s.status==='green').length;
     const inactive = enriched.filter(s=>s.status!=='green').length;
-    const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
-        r.style.display = f===null||(f==='green'&&r.dataset.status==='green')||(f==='inactive'&&r.dataset.status!=='green') ? '' : 'none';
-    });
-    const li = latestInfo(pluginName);
-    setHero(displayName(pluginName), displayName(pluginName), [
-        { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
-        { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
-        { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
-        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: li&&li.download_url?`Ultima versione · <a href="${li.download_url}" download style="color:var(--magenta);font-weight:700;text-decoration:none;white-space:nowrap">↓ Scarica zip</a>`:'Ultima versione' },
-    ]);
+    setHero(displayName(pluginName), displayName(pluginName), [{num:enriched.length,label:'Siti installati'},{num:active,label:'Plugin attivi'},{num:inactive,label:'Senza segnale'}]);
 
     if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
 
@@ -506,8 +389,8 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
-            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
+            <table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th><th>Ultima richiesta</th><th>Supabase / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th><th>Installato il</th><th>Azioni</th></tr></thead>
+            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table>
         </div>`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
@@ -517,27 +400,23 @@ async function loadSites(pluginName, silent = false) {
         btnUpdateAll.addEventListener('click', async () => {
             const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
             if (!outdatedBtns.length) return;
-            const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
-            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
+            if (!confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`)) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
-            // In PARALLELO: un sito lento a rispondere non deve bloccare gli altri
-            // (col vecchio for sequenziale il primo sito appeso fermava tutti gli altri).
-            await Promise.all(outdatedBtns.map(btn =>
-                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
-            ));
+            for (const btn of outdatedBtns) {
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true);
+            }
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
     }
 
-    const attachRowHandlers = () => {
     el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping') || e.target.closest('.btn-update-row')) return; loadSiteDetail(row.dataset.siteId); }); });
     el.querySelectorAll('.btn-update-row').forEach(btn => {
         btn.addEventListener('click', async e => {
             e.stopPropagation();
             if (btn.dataset.outdated !== '1') {
-                if2Modal('✓ Ultima versione già installata.');
+                alert('✓ Ultima versione già installata.');
                 return;
             }
             await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
@@ -555,55 +434,25 @@ async function loadSites(pluginName, silent = false) {
             finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
         });
     });
-    };
-    attachRowHandlers();
-    // click sulle intestazioni ordinabili: ri-ordina e ridisegna solo il corpo tabella
-    el.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
-        const k = th.dataset.sort;
-        if (_ss.key === k) _ss.dir = -_ss.dir; else { _ss.key = k; _ss.dir = -1; }
-        applySitesSort();
-        el.querySelector('.sites-table tbody').innerHTML = enriched.map(siteRowHtml).join('');
-        el.querySelectorAll('th[data-sort]').forEach(h => { h.innerHTML = h.dataset.label + _arrow(h.dataset.sort); });
-        attachRowHandlers();
-    }));
 }
 
 function siteRowHtml(s) {
     const integ = s.last_integ || {};
     const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
     const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
-    return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
-        <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
+    return `<tr data-site-id="${esc(s.site_id)}">
+        <td>${dot(s.status)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
-        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${s.last_request?timeAgo(s.last_request):'—'}</td>
-        <td style="font-size:12px;color:var(--grey);white-space:nowrap;font-weight:700;text-align:center">${s.total_requests||0}</td>
-        <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');if(s.feature_date_chiuse===false||s.feature_date_chiuse===0)off.push('Date chiuse');if(s.feature_minimum_stay===false||s.feature_minimum_stay===0)off.push('Min stay');if(s.feature_dot_db===false||s.feature_dot_db===0||s.feature_dot_crm===false||s.feature_dot_crm===0||s.feature_dot_amelia===false||s.feature_dot_amelia===0)off.push('Semafori');const TOT=6;if(!off.length)return '<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';if(off.length===TOT)return '<span style="color:var(--magenta);font-weight:700">Tutte OFF</span>';return '<span style="color:var(--magenta);font-weight:700">OFF: '+off.join(', ')+'</span>';})()}</td>
+        <td style="font-size:12px;color:var(--grey)">${s.last_request?timeAgo(s.last_request):'—'}</td>
+        <td><div class="integ-dots-row"><span class="integ-dots-label">Supabase</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
+        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');return off.length?off.map(f=>`<span style="color:var(--magenta);font-weight:700">${f} OFF</span>`).join('<br>'):'<span style="color:#bbb">—</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
-        <td style="white-space:nowrap"><div class="row-actions">
+        <td style="white-space:nowrap">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
-        </div></td>
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+        </td>
     </tr>`;
-}
-
-// Applica un'impostazione DAVVERO sul plugin del sito, con retry e verifica.
-// Usa body form-urlencoded = richiesta "semplice" → nessun preflight CORS dal browser.
-// Ritorna true solo se il plugin conferma {success:true}.
-async function setPluginConfig(url, apiKey, key, value) {
-    if (!url || !apiKey) return false;
-    const endpoint = url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config';
-    const body = new URLSearchParams({ api_key: apiKey, key: key, value: String(value) });
-    for (let i = 0; i < 2; i++) {
-        try {
-            const resp = await fetch(endpoint, { method: 'POST', body });
-            const json = await resp.json().catch(() => ({}));
-            if (resp.ok && json && json.success) return true;
-        } catch (e) {}
-        if (i === 0) await new Promise(r => setTimeout(r, 700)); // breve attesa prima del retry
-    }
-    return false;
 }
 
 // ─── VIEW: DETTAGLIO SITO ─────────────────────────────────────────────────────
@@ -617,19 +466,16 @@ async function loadSiteDetail(siteId, silent = false) {
     const weekAgo   = new Date(now - 7  * 86400000);
     const thirtyAgo = new Date(now - 30 * 86400000);
 
-    const { data: site, error: se } = await _SBq.from('mon_sites').select('*').eq('site_id', siteId).single();
+    const { data: site, error: se } = await _SB.from('mon_sites').select('*').eq('site_id', siteId).single();
     if (se) { el.innerHTML = errorHtml(); return; }
 
-    const ninetyAgo = new Date(now - 90 * 86400000);
-    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }, { data: formSnap }, { data: richEvents }] = await Promise.all([
-        _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
-        _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
-        _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', weekAgo.toISOString()),
-        _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
-        _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted'),
-        _SBq.from('mon_events').select('payload').eq('site_id',siteId).eq('event_type','forms_snapshot').order('created_at',{ascending:false}).limit(1),
-        _SBq.from('mon_events').select('payload, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', ninetyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
+    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }] = await Promise.all([
+        _SB.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
+        _SB.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()),
+        _SB.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
+        _SB.from('mon_events').select('event_type, created_at').eq('site_id',siteId).gte('created_at', weekAgo.toISOString()),
+        _SB.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()),
+        _SB.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted')
     ]);
 
     const dailyCounts = {};
@@ -637,7 +483,7 @@ async function loadSiteDetail(siteId, silent = false) {
     (allEvents||[]).forEach(e => { const day=e.created_at.slice(0,10); if(dailyCounts[day]!==undefined) dailyCounts[day]++; });
 
     const trendDays = {};
-    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0,err:0},crm:{ok:0,tot:0,err:0},amelia:{ok:0,tot:0,err:0}}; }
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0},crm:{ok:0,tot:0},amelia:{ok:0,tot:0}}; }
 
     (intTrends||[]).forEach(raw => {
         let s = normalizeRecord(raw);
@@ -652,10 +498,9 @@ async function loadSiteDetail(siteId, silent = false) {
                 ? s.status==='ok'
                 : (s.status==='ok'||s.status==='info'||s.status==='skipped');
             if(isOk) trendDays[day][s.integration].ok++;
-            if(s.status==='error') trendDays[day][s.integration].err++;
         }
     });
-    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null,errRate:d[integ].tot>0?d[integ].err/d[integ].tot:null})) }));
+    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null})) }));
 
     const integrationStatus = {};
     ['supabase','crm','amelia'].forEach(integ => {
@@ -671,10 +516,8 @@ async function loadSiteDetail(siteId, silent = false) {
         }
         const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
         const rate = ok/stats.length;
-        // Dot basato sul tasso di errori veri per tutti e 3: skipped/info non sono errori
-        const errCount = stats.filter(s => s.status === 'error').length;
-        const errRate  = errCount / stats.length;
-        const status   = errRate === 0 ? 'green' : errRate < 0.5 ? 'yellow' : 'red';
+        // Amelia: sempre verde se rate>0 (i duplicati non sono errori); Supabase/CRM: solo 100% è verde
+        const status = integ==='amelia' ? (rate>0?'green':'yellow') : (rate>=1?'green':'red');
         integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
     });
 
@@ -691,7 +534,6 @@ async function loadSiteDetail(siteId, silent = false) {
     const allMessages = (logs||[]).map(l=>l.message||'');
     const suggestions = [];
     if (allMessages.some(m=>m.includes('BAD_CONTACT_MSISDN'))) suggestions.push({level:'error',title:'Numero di telefono non valido (Amelia)',action:'Amelia rifiuta il numero perché non è nel formato internazionale. Usa il campo telefono con validazione attiva.'});
-    if (allMessages.some(m=>m.includes('BAD_CONTACT_EMAIL'))) suggestions.push({level:'error',title:'Email non valida (Amelia)',action:'Amelia ha rifiutato l\'email del cliente. Verifica che il campo email nel form sia obbligatorio e di tipo CAMPO EMAIL (non testo).'});
     if (allMessages.some(m=>m.includes('PGRST204'))) suggestions.push({level:'error',title:'Colonna mancante in Supabase',action:'Il form cerca una colonna che non esiste. Verifica i nomi delle colonne nelle impostazioni del form → Supabase.'});
     if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:site.api_key&&latestDownloadUrl?`Usa il pulsante "Aggiorna ora" in Informazioni sito.`:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
 
@@ -700,80 +542,7 @@ async function loadSiteDetail(siteId, silent = false) {
     setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
     setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
 
-    const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
-
-    // ─── Dati "Form e richieste" (card sopra il grafico) ───
-    // Canale ricavato dal nome del form (i nomi seguono lo schema "… - Ads/Fb/NL/DEM - …")
-    const channelOf = name => {
-        const n = ' ' + String(name||'').toLowerCase() + ' ';
-        if (/\bads\b|pmax|ricerca|\bsem\b|\bsea\b|adwords/.test(n)) return 'Google Ads';
-        if (/\bfb\b|facebook|meta|instagram|\big\b/.test(n))        return 'Facebook/Instagram';
-        if (/\bnl\b|newsletter/.test(n))                            return 'Newsletter';
-        if (/\bdem\b/.test(n))                                      return 'Email (DEM)';
-        return 'Altro / Sito';
-    };
-    const reqEvents = (richEvents||[]).map(e => {
-        const p = e.payload || {};
-        return {
-            form_id:   p.form_id!=null ? String(p.form_id) : '',
-            form_name: p.form_name || '',
-            ts:        new Date(e.created_at).getTime()
-        };
-    });
-    const formsInfo = {};
-    const snapForms = (formSnap && formSnap[0] && formSnap[0].payload && formSnap[0].payload.forms) || [];
-    snapForms.forEach(f => { formsInfo[String(f.id)] = { name: f.name || ('Form '+f.id), created: f.created_at }; });
-    reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
-    Object.keys(formsInfo).forEach(id => { formsInfo[id].channel = channelOf(formsInfo[id].name); });
-    const formIdsSorted = Object.keys(formsInfo).sort((a,b)=>(formsInfo[b].created||'').localeCompare(formsInfo[a].created||''));
-    const channelsSet = Array.from(new Set(formIdsSorted.map(id=>formsInfo[id].channel))).sort();
-
-    const formOpts = ['<option value="">Tutti i form</option>'].concat(formIdsSorted.map(id=>`<option value="${esc(id)}">${esc(formsInfo[id].name)}</option>`)).join('');
-    const chanOpts = ['<option value="__all__">Tutti i canali</option>'].concat(channelsSet.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`)).join('');
-    const formsReqCard = `
-        <div class="card" id="card-forms-req">
-            <div class="card-header"><span class="card-title">Form e richieste</span><span style="font-size:12px;color:var(--grey)">${formIdsSorted.length} form • ultimi 90 giorni</span></div>
-            <div style="padding:10px 26px 22px">
-                <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px">
-                    <div class="chart-toggle" id="req-period">
-                        <button class="chart-toggle-btn" data-p="today">Oggi</button>
-                        <button class="chart-toggle-btn" data-p="yest">Ieri</button>
-                        <button class="chart-toggle-btn active" data-p="7">7 giorni</button>
-                        <button class="chart-toggle-btn" data-p="30">30 giorni</button>
-                        <button class="chart-toggle-btn" data-p="90">90 giorni</button>
-                    </div>
-                    <select id="req-form" class="req-select">${formOpts}</select>
-                    <select id="req-channel" class="req-select">${chanOpts}</select>
-                </div>
-                <div id="req-count" class="req-count"></div>
-                <div id="req-forms-table" style="margin-top:18px"></div>
-            </div>
-        </div>`;
-
-    // Ricalcolo lato client dei filtri (periodo/form/canale)
-    const reqThreshold = p => {
-        if (p==='today') { const d=new Date(); d.setHours(0,0,0,0); return {from:d.getTime(), to:Infinity}; }
-        if (p==='yest')  { const end=new Date(); end.setHours(0,0,0,0); return {from:end.getTime()-86400000, to:end.getTime()}; }
-        const days = p==='7'?7:p==='30'?30:90;
-        return {from: now.getTime()-days*86400000, to:Infinity};
-    };
-    const renderReq = () => {
-        const p     = document.querySelector('#req-period .chart-toggle-btn.active')?.dataset.p || '7';
-        const fForm = document.getElementById('req-form').value;
-        const fChan = document.getElementById('req-channel').value;
-        const chMatch = r => fChan==='__all__' || (formsInfo[r.form_id] && formsInfo[r.form_id].channel===fChan);
-        const {from,to} = reqThreshold(p);
-        const inPeriod = reqEvents.filter(r => r.ts>=from && r.ts<to);
-        const filtered = inPeriod.filter(r => (fForm===''||r.form_id===fForm) && chMatch(r));
-        document.getElementById('req-count').innerHTML = `<span class="req-big">${filtered.length}</span><span class="req-big-label">richieste nel periodo selezionato</span>`;
-        const byForm = {};
-        inPeriod.filter(chMatch).forEach(r=>{ byForm[r.form_id]=(byForm[r.form_id]||0)+1; });
-        const visibleIds = formIdsSorted.filter(id => fChan==='__all__' || formsInfo[id].channel===fChan);
-        const rows = visibleIds.map(id=>({name:formsInfo[id].name, created:formsInfo[id].created, n:byForm[id]||0})).sort((a,b)=>b.n-a.n);
-        document.getElementById('req-forms-table').innerHTML = rows.length
-            ? `<table class="req-table"><thead><tr><th>Form</th><th>Creato il</th><th style="text-align:right">Richieste</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.created?fmtDate(r.created):'—'}</td><td style="text-align:right;font-weight:700">${r.n}</td></tr>`).join('')}</tbody></table>`
-            : `<div style="padding:14px 0;color:var(--grey);font-size:.85rem">Nessun form ancora registrato dal plugin. Comparirà dopo il primo aggiornamento/invio.</div>`;
-    };
+    const integLabels = {supabase:'Supabase',crm:'CRM',amelia:'Amelia'};
 
     el.innerHTML = `
         <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
@@ -783,7 +552,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error:''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error.substring(0,40):''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
@@ -793,7 +562,6 @@ async function loadSiteDetail(siteId, silent = false) {
                 </div>
             </div>
         </div>
-        ${formsReqCard}
         <div class="card">
             <div class="card-header"><span class="card-title">Richieste ricevute giorno per giorno</span>
             <div class="chart-toggle" id="sub-toggle"><button class="chart-toggle-btn active" data-range="7">7 giorni</button><button class="chart-toggle-btn" data-range="30">30 giorni</button></div></div>
@@ -803,26 +571,26 @@ async function loadSiteDetail(siteId, silent = false) {
             const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
             if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
             const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
-            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.errRate===0?'ok':r.errRate<0.5?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=row.integ==='amelia'?'ok':r.rate===100?'ok':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
         })()}
         <div class="stat-cards-row">
             <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
             <div class="stat-big-card cyan"><div class="stat-big-num">${events?.length||0}</div><div class="stat-big-label">Richieste negli ultimi 7 giorni</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.supabase)}"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.crm)}"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
-            <div class="stat-big-card ${statCardClass(integrationStatus.amelia)}"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
+            <div class="stat-big-card"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
         </div>
         <div class="card" id="card-features">
-            <div class="card-header"><span class="card-title">Funzionalità visibili sul plugin</span></div>
+            <div class="card-header"><span class="card-title">Funzionalità</span></div>
             <div style="padding:4px 26px 16px">
                 ${[
-                    {key:'if2_feature_stats',        label:'Statistiche',            val:site.feature_stats},
-                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',       val:site.feature_crm_tab},
-                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida',   val:site.feature_settings_tab},
-                    {key:'if2_feature_date_chiuse',  label:'Date chiuse',            val:site.feature_date_chiuse},
-                    {key:'if2_feature_minimum_stay', label:'Minimum stay',           val:site.feature_minimum_stay},
-                    {key:'__semafori__',             label:'Semafori DB / CRM / Amelia', val:site.feature_dot_db!==false&&site.feature_dot_db!==0&&site.feature_dot_crm!==false&&site.feature_dot_crm!==0&&site.feature_dot_amelia!==false&&site.feature_dot_amelia!==0},
-                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattiva'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="width:44px;height:26px;border-radius:13px;background:${on?'var(--cyan)':'var(--magenta)'};border:none;cursor:pointer;position:relative;padding:0;flex-shrink:0"><span style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on?'21px':'3px'};display:block;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span></button></div></div>`;}).join('')}
+                    {key:'if2_feature_stats',        label:'Statistiche',          val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',     val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida', val:site.feature_settings_tab},
+                    {key:'if2_feature_dot_db',       label:'Semaforo DB',          val:site.feature_dot_db},
+                    {key:'if2_feature_dot_crm',      label:'Semaforo CRM',         val:site.feature_dot_crm},
+                    {key:'if2_feature_dot_amelia',   label:'Semaforo Amelia',      val:site.feature_dot_amelia},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:14px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattivata'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="padding:3px 14px;font-size:.75rem;border:1.5px solid ${on?'var(--magenta)':'var(--cyan)'};background:transparent;color:${on?'var(--magenta)':'var(--cyan)'};border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">${on?'Disattiva':'Attiva'}</button></div></div>`;}).join('')}
             </div>
         </div>
         <div class="card">
@@ -840,130 +608,61 @@ async function loadSiteDetail(siteId, silent = false) {
     el.querySelectorAll('.btn-enable-crm').forEach(btn => {
         btn.addEventListener('click', async () => {
             btn.textContent = 'Attivazione...'; btn.disabled = true;
-            const ok = await setPluginConfig(btn.dataset.url, btn.dataset.apikey, 'if2_has_crm_override', 1);
-            if (ok) {
-                btn.textContent = 'CRM attivato!';
-                btn.style.background = 'var(--cyan)';
-                setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
-            } else {
-                btn.textContent = 'Errore: sito non raggiungibile'; btn.disabled = false;
-            }
+            try {
+                const resp = await fetch(btn.dataset.url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: btn.dataset.apikey, key: 'if2_has_crm_override', value: 1 }),
+                });
+                const json = await resp.json().catch(() => ({}));
+                if (resp.ok && json.success) {
+                    btn.textContent = 'CRM attivato!';
+                    btn.style.background = 'var(--cyan)';
+                    setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
+                } else {
+                    btn.textContent = 'Errore'; btn.disabled = false;
+                }
+            } catch { btn.textContent = 'Errore connessione'; btn.disabled = false; }
         });
     });
 
     el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const key    = btn.dataset.key;
-            const value  = parseInt(btn.dataset.value); // valore da impostare (0 o 1)
-            const sid    = btn.dataset.site;
-            const url    = btn.dataset.url;
+            btn.disabled = true; btn.textContent = '...';
+            const key   = btn.dataset.key;
+            const value = parseInt(btn.dataset.value);
+            const sid   = btn.dataset.site;
+            const url   = btn.dataset.url;
             const apiKey = btn.dataset.apikey;
-            const nowOn  = value === 1; // nuovo stato dopo il click
-
-            const knob       = btn.querySelector('span');
-            const stateLabel = btn.parentElement.querySelector('span:first-child');
-            const setVisual = (isOn) => {
-                btn.style.background = isOn ? 'var(--cyan)' : 'var(--magenta)';
-                if (knob) knob.style.left = isOn ? '21px' : '3px';
-                if (stateLabel) { stateLabel.textContent = isOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = isOn ? 'var(--cyan)' : 'var(--magenta)'; }
-            };
-
-            // Stato visivo ottimistico
-            setVisual(nowOn);
-            btn.style.pointerEvents = 'none';
-
-            // 1) Applica PRIMA al plugin (il plugin è la fonte di verità). Con retry.
-            const keys = key === '__semafori__'
-                ? ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']
-                : [key];
-            let applied = true;
-            for (const k of keys) {
-                if (!(await setPluginConfig(url, apiKey, k, value))) { applied = false; break; }
-            }
-
-            if (!applied) {
-                // Comando NON arrivato al sito → ripristina, avvisa, NON tocca Supabase (niente disallineamento)
-                setVisual(!nowOn);
-                btn.dataset.value = value;
-                btn.style.pointerEvents = '';
-                if2Modal('⚠ Impostazione NON applicata: il sito non ha risposto (forse offline).\nRiprova quando è online.');
-                return;
-            }
-
-            // 2) Plugin confermato → allinea Supabase (così lo stato mostrato è sempre quello vero)
             try {
-                if (key === '__semafori__') {
-                    await _SBq.from('mon_sites').update({ feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn }).eq('site_id', sid);
-                } else {
-                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_date_chiuse:'feature_date_chiuse',if2_feature_minimum_stay:'feature_minimum_stay'}[key];
-                    if (sbKey) await _SBq.from('mon_sites').update({ [sbKey]: nowOn }).eq('site_id', sid);
+                const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_dot_db:'feature_dot_db',if2_feature_dot_crm:'feature_dot_crm',if2_feature_dot_amelia:'feature_dot_amelia'}[key];
+                if (sbKey) await _SB.from('mon_sites').update({[sbKey]: value===1}).eq('site_id', sid);
+                if (url && apiKey) {
+                    await fetch(url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: apiKey, key, value }),
+                    }).catch(()=>{});
                 }
-            } catch (e) { /* il plugin è già a posto: Supabase è solo lo specchio */ }
-
-            btn.dataset.value = nowOn ? 0 : 1;
-            btn.style.pointerEvents = '';
+                setTimeout(() => loadSiteDetail(sid), 800);
+            } catch { btn.disabled = false; btn.textContent = 'Errore'; }
         });
     });
-
-    // Filtri "Form e richieste"
-    document.querySelectorAll('#req-period .chart-toggle-btn').forEach(b => b.addEventListener('click', () => {
-        document.querySelectorAll('#req-period .chart-toggle-btn').forEach(x => x.classList.remove('active'));
-        b.classList.add('active'); renderReq();
-    }));
-    document.getElementById('req-form').addEventListener('change', renderReq);
-    document.getElementById('req-channel').addEventListener('change', renderReq);
-    renderReq();
 
     const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
     if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
 }
 
-// Popup in stile in3pida (sostituisce if2Modal() nativo)
-function if2Modal(message, title = 'Avviso') {
-    const old = document.getElementById('if2-modal-overlay');
-    if (old) old.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'if2-modal-overlay';
-    overlay.className = 'if2-modal-overlay';
-    overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><button class="if2-modal-ok">Ok</button></div></div>`;
-    document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector('.if2-modal-ok').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc); } });
-}
-
-// Conferma in stile in3pida (sostituisce confirm() nativo). Ritorna Promise<boolean>.
-// listItems: array opzionale (es. nomi siti) reso come lista scrollabile — regge 4 o 200 voci.
-function if2Confirm(message, title = 'Conferma', listItems = null) {
-    return new Promise(resolve => {
-        const old = document.getElementById('if2-modal-overlay');
-        if (old) old.remove();
-        const overlay = document.createElement('div');
-        overlay.id = 'if2-modal-overlay';
-        overlay.className = 'if2-modal-overlay';
-        const listHtml = (listItems && listItems.length)
-            ? `<div class="if2-modal-list">${listItems.map(n => `<div class="if2-modal-list-item">${esc(String(n))}</div>`).join('')}</div>`
-            : '';
-        overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div>${listHtml}<div class="if2-modal-actions"><button class="if2-modal-cancel">Annulla</button><button class="if2-modal-ok">Ok</button></div></div></div>`;
-        document.body.appendChild(overlay);
-        const done = (val) => { overlay.remove(); resolve(val); };
-        overlay.querySelector('.if2-modal-ok').addEventListener('click', () => done(true));
-        overlay.querySelector('.if2-modal-cancel').addEventListener('click', () => done(false));
-        overlay.addEventListener('click', e => { if (e.target === overlay) done(false); });
-    });
-}
-
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
-    const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
-    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+    if (!skipConfirm && !confirm('Aggiornare il plugin su ' + siteUrl + '?\n\nIl sito resterà attivo durante l\'operazione.')) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
         const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
             method: 'POST',
-            body: new URLSearchParams({ api_key: apiKey, download_url: downloadUrl }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, download_url: downloadUrl }),
         });
         let json = {};
         try { json = await resp.json(); } catch {}
@@ -981,20 +680,14 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
             btn.style.color = 'white';
-            let msg;
-            if (resp.status === 404 || json.code === 'rest_no_route') {
-                msg = 'Aggiornamento da remoto non disponibile su questo sito: il plugin è disattivato o troppo vecchio.\nVai in WordPress del sito → Plugin → attivalo o caricalo a mano.';
-            } else {
-                msg = 'Errore aggiornamento: ' + (json.error || json.message || 'Risposta non valida dal server');
-            }
-            if2Modal(msg);
+            alert('Errore aggiornamento: ' + (json.error || 'Risposta non valida dal server'));
             setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
         }
     } catch (e) {
         btn.textContent = 'Errore connessione';
         btn.style.background = 'var(--red, #ef4444)';
         btn.style.color = 'white';
-        if2Modal('Impossibile contattare il sito:\n' + e.message);
+        alert('Impossibile contattare il sito:\n' + e.message);
         setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
     }
 }
@@ -1038,7 +731,7 @@ function showPingResult(name, d) {
         <div class="ping-row"><span style="color:var(--grey)">PHP</span><span style="margin-left:auto;font-weight:700">${esc(d.php_version||'—')}</span></div>
         <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
     }
-    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div><div class="ping-body">${body}</div></div>`;
+    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div>${body}</div>`;
     document.body.appendChild(modal);
     document.getElementById('ping-close').addEventListener('click', ()=>modal.remove());
     modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
@@ -1067,12 +760,8 @@ function setHero(label, title, stats) {
     document.getElementById('hero-label').textContent = label;
     document.getElementById('hero-title').textContent = title;
     const el = document.getElementById('sw-stats');
-    if (stats&&stats.length>0) {
-        el.style.display='';
-        const colors=['var(--magenta)','var(--cyan)','var(--dark)'];
-        el.innerHTML=stats.map((s,i)=>{const bg=s.color||colors[i%colors.length];const icon=s.icon!==undefined?s.icon:s.num;const display=s.display!==undefined?s.display:s.num;return`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${bg}">${icon}</div><div class="sw-stat-text"><div class="sw-stat-num">${display}</div><div class="sw-stat-label">${s.label}</div></div></div>`;}).join('');
-        stats.forEach((s,i)=>{ if(s.onclick){ const card=el.querySelector(`[data-i="${i}"]`); if(card) card.addEventListener('click', s.onclick); } });
-    } else el.style.display='none';
+    if (stats&&stats.length>0) { el.style.display=''; const colors=['var(--magenta)','var(--cyan)','var(--dark)']; el.innerHTML=stats.map((s,i)=>`<div class="sw-stat-card" ${s.clickable?`data-action="${esc(s.action)}"`:''}>  <div class="sw-stat-icon" style="background:${colors[i%colors.length]}">${s.num}</div><div class="sw-stat-text"><div class="sw-stat-num">${s.num}</div><div class="sw-stat-label">${s.label}</div></div></div>`).join(''); }
+    else el.style.display='none';
 }
 function setBreadcrumb(items) {
     const el = document.getElementById('breadcrumb');
@@ -1081,17 +770,13 @@ function setBreadcrumb(items) {
 }
 function infoRow(label, value, small=false) { return `<div class="info-row"><div class="info-label">${esc(label)}</div><div class="info-value"${small?' style="font-size:11px;color:var(--grey)"':''}>${esc(value||'—')}</div></div>`; }
 function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
-function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
 
 function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
-function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''} ${esc(status)}"${title?` title="${esc(title)}"`:''} style="cursor:default"></span>`; }
+function dot(status, lg=false) { return `<span class="dot${lg?' lg':''} ${esc(status)}"></span>`; }
 function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
 function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
 function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
-// Decodifica le entità HTML (es. nomi sito salvati come "Golf&amp;Beach" da WordPress)
-const _if2DecEl = typeof document !== 'undefined' ? document.createElement('textarea') : null;
-function decodeEntities(s) { if(s===null||s===undefined)return''; if(!_if2DecEl)return String(s); _if2DecEl.innerHTML = String(s); return _if2DecEl.value; }
-function esc(str) { if(str===null||str===undefined)return''; str = decodeEntities(String(str)); return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(str) { if(str===null||str===undefined)return''; return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function loadingHtml() { return '<div class="loading"><div class="spinner"></div> Caricamento...</div>'; }
 function errorHtml()   { return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>'; }
 function emptyHtml(title, sub) { return `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`; }
@@ -1202,8 +887,8 @@ function openEditUser(id) {
 }
 
 async function deleteUser(id, name) {
-    if (!(await if2Confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`))) return;
+    if (!confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`)) return;
     const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
-    if (error) { if2Modal('Errore: ' + error.message); return; }
+    if (error) { alert('Errore: ' + error.message); return; }
     loadUsers();
 }
