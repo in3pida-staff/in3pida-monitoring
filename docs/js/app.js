@@ -212,7 +212,7 @@ async function loadPlugins(silent = false) {
     const thirtyAgo = new Date(now - 30 * 86400000);
 
     const [r1, r2, r3] = await Promise.all([
-        _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
+        _SBq.from('mon_sites').select('plugin_name, site_id, site_name, last_heartbeat, plugin_version'),
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
         _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
     ]);
@@ -264,6 +264,7 @@ async function loadPlugins(silent = false) {
     const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
 
     const list = Object.values(plugins);
+    const if2Sites = (sites||[]).filter(s => s.plugin_name==='in3pida-form-2');
     if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
 
     const active = list.reduce((s, p) => s + p.active, 0);
@@ -285,6 +286,20 @@ async function loadPlugins(silent = false) {
                 <button class="chart-toggle-btn" data-range="30">30 giorni</button>
             </div></div>
             <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
+        </div>` : ''}
+        ${if2Sites.length > 0 ? `<div class="card" style="margin-top:24px">
+            <div class="card-header"><span class="card-title">Compilazioni form</span>
+            <div style="display:flex;align-items:center;gap:12px">
+                <select id="filter-hotel-compilazioni-home" style="font-family:Montserrat;font-size:12px;border:1px solid #e0e0e0;border-radius:6px;padding:4px 8px;color:#333;background:#fff">
+                    <option value="">Tutti gli hotel</option>
+                    ${if2Sites.map(s=>`<option value="${esc(s.site_id)}">${esc(s.site_name||s.site_id)}</option>`).join('')}
+                </select>
+                <div class="chart-toggle" id="compilazioni-home-toggle">
+                    <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                    <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+                </div>
+            </div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-compilazioni-home" height="80"></canvas></div>
         </div>` : ''}`;
 
     el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
@@ -300,6 +315,26 @@ async function loadPlugins(silent = false) {
         }
         buildGC(7);
         document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
+    }
+
+    if (if2Sites.length > 0 && document.getElementById('chart-compilazioni-home')) {
+        const if2SiteIds = new Set(if2Sites.map(s => s.site_id));
+        const evIf2 = (eventsAll||[]).filter(e => if2SiteIds.has(e.site_id));
+        let cc = null, ccRange = 7, ccFilter = '';
+        const daily30 = {};
+        for (let i = 29; i >= 0; i--) { const d = new Date(now - i*86400000); daily30[d.toISOString().slice(0,10)] = 0; }
+        function buildCC(range) {
+            const days = Object.keys(daily30).slice(-range);
+            const counts = {}; days.forEach(d => { counts[d] = 0; });
+            evIf2.forEach(e => { const day = e.created_at.slice(0,10); if (counts[day]!==undefined && (!ccFilter||e.site_id===ccFilter)) counts[day]++; });
+            const canvas = document.getElementById('chart-compilazioni-home'); if (!canvas) return;
+            if (cc) cc.destroy();
+            const c = '#d82d6b';
+            cc = new Chart(canvas, { type:'line', data:{ labels:days.map(d=>new Date(d+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short'})), datasets:[{ label:'Compilazioni', data:days.map(d=>counts[d]), borderColor:c, borderWidth:2.5, pointBackgroundColor:c, pointRadius:3, pointHoverRadius:6, fill:true, backgroundColor:(ctx)=>{ const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height); g.addColorStop(0,'rgba(216,45,107,0.15)'); g.addColorStop(1,'rgba(216,45,107,0)'); return g; }, tension:0.4 }] }, options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}}, y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}} } } });
+        }
+        buildCC(7);
+        document.getElementById('filter-hotel-compilazioni-home')?.addEventListener('change', e => { ccFilter=e.target.value; buildCC(ccRange); });
+        document.querySelectorAll('#compilazioni-home-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#compilazioni-home-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); ccRange=parseInt(btn.dataset.range); buildCC(ccRange); }); });
     }
 }
 
