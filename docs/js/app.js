@@ -546,12 +546,36 @@ async function loadSites(pluginName, silent = false) {
             if (!outdatedBtns.length) return;
             const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
-            btnUpdateAll.textContent = 'Aggiornamento in corso...';
+            btnUpdateAll.textContent = 'Download ZIP...';
             btnUpdateAll.disabled = true;
-            await Promise.all(outdatedBtns.map(btn =>
-                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
-            ));
+
+            // 1. Scarica lo ZIP una volta nel browser.
+            const dlUrl = outdatedBtns[0].dataset.dl;
+            let zipBlob = null;
+            try { const r = await fetch(dlUrl); if (r.ok) zipBlob = await r.blob(); } catch {}
+
+            // 2. Prova TUTTI i siti in parallelo con il blob (siti ≥2.2.362 lo gestiscono,
+            //    zero richieste a GitHub). I siti vecchi tornano needsUrl=true.
+            let done = 0;
+            const total = outdatedBtns.length;
+            const setProgress = () => { btnUpdateAll.textContent = `Aggiornamento ${done}/${total}...`; };
+            setProgress();
+
+            const needsUrlBtns = [];
+            await Promise.all(outdatedBtns.map(async btn => {
+                const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob, true);
+                if (result === 'needs_url') needsUrlBtns.push(btn);
+                else { done++; setProgress(); }
+            }));
+
+            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta con retry su 429.
+            for (const btn of needsUrlBtns) {
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, null, true);
+                done++; setProgress();
+            }
+
             btnUpdateAll.textContent = 'Tutti aggiornati!';
+            btnUpdateAll.disabled = false;
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
     }
@@ -980,47 +1004,75 @@ function if2Confirm(message, title = 'Conferma', listItems = null) {
 }
 
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
-async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
+// zipBlob: Blob scaricato nel browser — se presente lo invia direttamente (zero richieste a GitHub).
+// silent: true durante "Aggiorna tutti" — niente modal, errori solo sul bottone.
+// Ritorna 'needs_url' se il sito non supporta il blob e serve il download_url.
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob, silent) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
     if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
-    btn.textContent = 'Aggiornamento in corso...';
+    btn.textContent = 'Aggiornamento...';
     btn.disabled = true;
-    try {
-        const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
-            method: 'POST',
-            body: new URLSearchParams({ api_key: apiKey, download_url: downloadUrl }),
-        });
-        let json = {};
-        try { json = await resp.json(); } catch {}
-        if (resp.ok && json.success) {
-            btn.textContent = 'Aggiornato!';
-            btn.style.background = 'var(--cyan)';
-            btn.style.color = 'white';
-            // Pinga il sito dopo 2s: questo carica il nuovo codice PHP e triggera
-            // il heartbeat con la versione corretta. Poi ricarica dopo altri 3s.
-            setTimeout(async () => {
-                try { await pingLive(siteUrl, apiKey); } catch {}
-                setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
-            }, 2000);
-        } else {
-            btn.textContent = 'Errore — riprova';
-            btn.style.background = 'var(--red, #ef4444)';
-            btn.style.color = 'white';
-            let msg;
-            if (resp.status === 404 || json.code === 'rest_no_route') {
-                msg = 'Aggiornamento da remoto non disponibile su questo sito: il plugin è disattivato o troppo vecchio.\nVai in WordPress del sito → Plugin → attivalo o caricalo a mano.';
-            } else {
-                msg = 'Errore aggiornamento: ' + (json.error || json.message || 'Risposta non valida dal server');
-            }
-            if2Modal(msg);
-            setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
-        }
-    } catch (e) {
-        btn.textContent = 'Errore connessione';
+
+    const doFetch = async (body) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 90000);
+        try {
+            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
+            clearTimeout(t);
+            return r;
+        } catch(e) { clearTimeout(t); throw e; }
+    };
+
+    const showErr = (msg) => {
+        btn.textContent = 'Errore — riprova';
         btn.style.background = 'var(--red, #ef4444)';
         btn.style.color = 'white';
-        if2Modal('Impossibile contattare il sito:\n' + e.message);
+        if (!silent) if2Modal(msg);
         setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
+    };
+
+    try {
+        // Tentativo 1: blob upload (siti ≥2.2.362, non tocca GitHub).
+        if (zipBlob) {
+            const fd = new FormData();
+            fd.append('api_key', apiKey);
+            fd.append('plugin_zip', zipBlob, 'plugin.zip');
+            const r1 = await doFetch(fd);
+            let j1 = {}; try { j1 = await r1.json(); } catch {}
+            if (r1.ok && j1.success) {
+                btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                return 'ok';
+            }
+            // Sito vecchio: non sa gestire plugin_zip, serve download_url.
+            if (r1.status === 400 && (j1.error || '').includes('download_url')) return 'needs_url';
+        }
+
+        // Tentativo 2: download_url (siti vecchi). Retry automatico su 429.
+        let attempts = 0;
+        while (attempts < 5) {
+            attempts++;
+            const body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
+            let resp; try { resp = await doFetch(body); } catch(e) { showErr('Impossibile contattare il sito:\n' + e.message); return 'error'; }
+            let json = {}; try { json = await resp.json(); } catch {}
+            if (resp.ok && json.success) {
+                btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                return 'ok';
+            }
+            if (resp.status === 429) {
+                btn.textContent = `Riprova ${attempts}/5...`;
+                await new Promise(res => setTimeout(res, 10000 * attempts)); // backoff: 10s, 20s, 30s...
+                continue;
+            }
+            let msg = resp.status === 404 || json.code === 'rest_no_route'
+                ? 'Plugin disattivato o troppo vecchio su questo sito.\nAggiornalo manualmente da WordPress.'
+                : 'Errore aggiornamento: ' + (json.error || json.message || 'Risposta non valida');
+            showErr(msg); return 'error';
+        }
+        showErr('Troppi tentativi falliti (429). Riprova tra qualche minuto.'); return 'error';
+    } catch (e) {
+        showErr('Impossibile contattare il sito:\n' + e.message); return 'error';
     }
 }
 
