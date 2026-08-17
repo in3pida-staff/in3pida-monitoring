@@ -182,7 +182,7 @@ function latestInfo(pluginName) {
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
-    const urls = { 'in3pida-form-2': `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip` };
+    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
     return { version, date, download_url: urls[pluginName] || '' };
 }
 
@@ -546,22 +546,10 @@ async function loadSites(pluginName, silent = false) {
             if (!outdatedBtns.length) return;
             const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
-            btnUpdateAll.textContent = 'Download ZIP...';
-            btnUpdateAll.disabled = true;
-            // Scarica lo ZIP una volta nel browser poi lo invia come blob a ogni sito.
-            // Siti nuovi (≥2.2.362) usano il blob → zero hit su GitHub.
-            // Siti vecchi ricevono anche download_url ma scaglionata di 300ms → no 429.
-            const dlUrl = outdatedBtns[0].dataset.dl;
-            let zipBlob = null;
-            try {
-                const r = await fetch(dlUrl);
-                if (r.ok) zipBlob = await r.blob();
-            } catch {}
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
-            await Promise.all(outdatedBtns.map((btn, i) =>
-                new Promise(res => setTimeout(res, i * 2000)).then(() =>
-                    updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob)
-                )
+            btnUpdateAll.disabled = true;
+            await Promise.all(outdatedBtns.map(btn =>
+                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
             ));
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
@@ -992,31 +980,16 @@ function if2Confirm(message, title = 'Conferma', listItems = null) {
 }
 
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
-async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob) {
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
     if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
-        let body;
-        if (zipBlob) {
-            // ZIP già scaricato → invialo direttamente; manda anche download_url
-            // così i siti vecchi (< 2.2.362) possono usarlo come fallback.
-            body = new FormData();
-            body.append('api_key', apiKey);
-            body.append('download_url', downloadUrl);
-            body.append('plugin_zip', zipBlob, 'plugin.zip');
-        } else {
-            body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
-        }
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 60000); // 60s timeout per sito
         const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
             method: 'POST',
-            body,
-            signal: ctrl.signal,
+            body: new URLSearchParams({ api_key: apiKey, download_url: downloadUrl }),
         });
-        clearTimeout(timer);
         let json = {};
         try { json = await resp.json(); } catch {}
         if (resp.ok && json.success) {
@@ -1029,11 +1002,6 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
                 try { await pingLive(siteUrl, apiKey); } catch {}
                 setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
             }, 2000);
-        } else if (resp.status === 429) {
-            // Too Many Requests: riprova automaticamente dopo 5s senza aprire modal.
-            btn.textContent = 'Riprova (429)...';
-            await new Promise(res => setTimeout(res, 5000));
-            await updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, true, zipBlob);
         } else {
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
