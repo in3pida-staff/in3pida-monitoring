@@ -508,7 +508,24 @@ async function loadSites(pluginName, silent = false) {
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
-        </div>`;
+        </div>
+        ${pluginName==='in3pida-form-2'?`
+        <div class="card" id="card-compilazioni" style="margin-top:24px">
+            <div class="card-header">
+                <span class="card-title">Compilazioni form</span>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <select id="filter-hotel-compilazioni" style="font-family:Montserrat;font-size:12px;border:1px solid #e0e0e0;border-radius:6px;padding:4px 8px;color:#333;background:#fff">
+                        <option value="">Tutti gli hotel</option>
+                        ${enriched.map(s=>`<option value="${esc(s.site_id)}">${esc(s.site_name||s.site_id)}</option>`).join('')}
+                    </select>
+                    <div class="chart-toggle" id="compilazioni-toggle">
+                        <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                        <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+                    </div>
+                </div>
+            </div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-compilazioni" height="80"></canvas></div>
+        </div>`:''}`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
 
@@ -526,6 +543,7 @@ async function loadSites(pluginName, silent = false) {
                     const fd = new FormData();
                     fd.append('api_key', s.api_key);
                     fd.append('days', '7');
+                    fd.append('force', '1');
                     const resp = await fetch(s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/retry-supabase', { method: 'POST', body: fd });
                     const json = await resp.json();
                     totalOk   += json.ok   || 0;
@@ -615,6 +633,27 @@ async function loadSites(pluginName, silent = false) {
         el.querySelectorAll('th[data-sort]').forEach(h => { h.innerHTML = h.dataset.label + _arrow(h.dataset.sort); });
         attachRowHandlers();
     }));
+
+    // Grafico compilazioni (solo in3pida-form-2)
+    if (pluginName === 'in3pida-form-2' && siteIds.length > 0) {
+        let chartComp = null, compRange = 7, compFilter = '', evComp = [];
+        const thirtyAgo2 = new Date(Date.now() - 30 * 86400000);
+        _SBq.from('mon_events').select('site_id,created_at').in('site_id',siteIds).eq('event_type','form_submitted').gte('created_at',thirtyAgo2.toISOString()).order('created_at',{ascending:false}).limit(50000).then(({data}) => {
+            evComp = data || [];
+            buildCompChart();
+        });
+        const buildCompChart = () => {
+            const days = [];
+            for (let i = compRange-1; i >= 0; i--) { const d = new Date(Date.now()-i*86400000); days.push(d.toISOString().slice(0,10)); }
+            const counts = {}; days.forEach(d => { counts[d] = 0; });
+            evComp.forEach(e => { const day = e.created_at.slice(0,10); if (counts[day]!==undefined && (!compFilter||e.site_id===compFilter)) counts[day]++; });
+            const canvas = document.getElementById('chart-compilazioni'); if (!canvas) return;
+            if (chartComp) chartComp.destroy();
+            chartComp = new Chart(canvas, { type:'bar', data:{ labels:days.map(d=>new Date(d+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short'})), datasets:[{label:'Compilazioni',data:days.map(d=>counts[d]),backgroundColor:'rgba(216,45,107,0.7)',borderColor:'#d82d6b',borderWidth:1.5,borderRadius:3}] }, options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}}, y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}} } } });
+        };
+        document.getElementById('filter-hotel-compilazioni')?.addEventListener('change', e => { compFilter=e.target.value; buildCompChart(); });
+        document.querySelectorAll('#compilazioni-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#compilazioni-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); compRange=parseInt(btn.dataset.range); buildCompChart(); }); });
+    }
 }
 
 function siteRowHtml(s) {
