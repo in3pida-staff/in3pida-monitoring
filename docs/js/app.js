@@ -293,22 +293,18 @@ async function loadPlugins(silent = false) {
             <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
         </div>` : ''}
         <div class="card" style="margin-top:24px">
-            <div class="card-header">
-                <span class="card-title">Compilazioni form giornaliere</span>
+            <div class="card-header"><span class="card-title">Compilazioni form giornaliere</span>
+            <div style="display:flex;align-items:center;gap:10px">
                 <select id="hotel-filter" style="font-family:inherit;font-size:12px;padding:4px 8px;border:1px solid #e8e8f0;border-radius:6px;color:#333;background:#fff;cursor:pointer">
                     <option value="">— Tutti gli hotel —</option>
                     ${activeSiteIds.map(sid => `<option value="${esc(sid)}">${esc(siteLabel[sid] || sid)}</option>`).join('')}
                 </select>
-            </div>
-            <div style="padding:0 26px 20px;overflow-x:auto">
-                <table style="width:100%;border-collapse:collapse;font-size:13px">
-                    <thead><tr style="border-bottom:2px solid #f0f0f0">
-                        <th style="text-align:left;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">DATA</th>
-                        <th style="text-align:right;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">RICHIESTE</th>
-                    </tr></thead>
-                    <tbody id="daily-req-body"></tbody>
-                </table>
-            </div>
+                <div class="chart-toggle" id="comp-toggle">
+                    <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                    <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+                </div>
+            </div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-compilazioni" height="80"></canvas></div>
         </div>`;
 
     el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
@@ -326,24 +322,27 @@ async function loadPlugins(silent = false) {
         document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
     }
 
-    // Tabella compilazioni giornaliere
-    const allDates = Object.keys(dailyPerSite).reverse();
-    function buildDailyTable(filterSite) {
-        const tbody = document.getElementById('daily-req-body');
-        if (!tbody) return;
-        tbody.innerHTML = allDates.map(date => {
-            const counts = dailyPerSite[date] || {};
-            const total = filterSite ? (counts[filterSite] || 0) : Object.values(counts).reduce((s,v)=>s+v,0);
-            const label = new Date(date).toLocaleDateString('it-IT',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
-            return `<tr style="border-bottom:1px solid #f5f5f8">
-                <td style="padding:9px 8px;color:#333">${esc(label)}</td>
-                <td style="padding:9px 8px;text-align:right;font-weight:${total>0?'700':'400'};color:${total>0?'#d82d6b':'#bbb'}">${total}</td>
-            </tr>`;
-        }).join('');
+    // Grafico compilazioni giornaliere
+    if (document.getElementById('chart-compilazioni')) {
+        const allDates30 = Object.keys(dailyPerSite).sort();
+        let gc2 = null;
+        function buildCompChart(range, filterSite) {
+            const dates = allDates30.slice(-range);
+            const labels = dates.map(d => new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+            const data = dates.map(d => {
+                const counts = dailyPerSite[d] || {};
+                return filterSite ? (counts[filterSite] || 0) : Object.values(counts).reduce((s,v)=>s+v,0);
+            });
+            if (gc2) gc2.destroy();
+            const ctx = document.getElementById('chart-compilazioni');
+            gc2 = new Chart(ctx, { type:'line', data:{ labels, datasets:[{ label:'Compilazioni', data, borderColor:'#d82d6b', borderWidth:2.5, pointBackgroundColor:'#d82d6b', pointRadius:3, pointHoverRadius:6, fill:true, backgroundColor:(c)=>{ const g=c.chart.ctx.createLinearGradient(0,0,0,c.chart.height); g.addColorStop(0,'rgba(216,45,107,0.15)'); g.addColorStop(1,'rgba(216,45,107,0)'); return g; }, tension:0.4 }]}, options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}}, y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}} }}});
+        }
+        let compRange = 7, compHotel = '';
+        buildCompChart(compRange, compHotel);
+        document.querySelectorAll('#comp-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#comp-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); compRange=parseInt(btn.dataset.range); buildCompChart(compRange, compHotel); }); });
+        const hotelFilter = document.getElementById('hotel-filter');
+        if (hotelFilter) hotelFilter.addEventListener('change', () => { compHotel=hotelFilter.value; buildCompChart(compRange, compHotel); });
     }
-    buildDailyTable('');
-    const hotelFilter = document.getElementById('hotel-filter');
-    if (hotelFilter) hotelFilter.addEventListener('change', () => buildDailyTable(hotelFilter.value));
 }
 
 function pluginCardHtml(p) {
