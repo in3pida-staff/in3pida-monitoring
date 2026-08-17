@@ -548,11 +548,9 @@ async function loadSites(pluginName, silent = false) {
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
-            // SEQUENZIALE: un sito alla volta → evita che N siti scarichino da GitHub
-            // in parallelo e ricevano 429 Too Many Requests.
-            for (const btn of outdatedBtns) {
-                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true);
-            }
+            await Promise.all(outdatedBtns.map(btn =>
+                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
+            ));
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
@@ -997,10 +995,14 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         } else {
             body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
         }
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60000); // 60s timeout per sito
         const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
             method: 'POST',
             body,
+            signal: ctrl.signal,
         });
+        clearTimeout(timer);
         let json = {};
         try { json = await resp.json(); } catch {}
         if (resp.ok && json.success) {
