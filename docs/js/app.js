@@ -505,12 +505,39 @@ async function loadSites(pluginName, silent = false) {
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>`;
 
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
+
+    const btnRetryAll = document.getElementById('btn-retry-supabase-all');
+    if (btnRetryAll) {
+        btnRetryAll.addEventListener('click', async () => {
+            const targets = enriched.filter(s => s.site_url && s.api_key);
+            if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
+            const names = targets.map(s => s.site_name || s.site_url || s.site_id);
+            if (!(await if2Confirm(`Rinviare a Supabase le richieste fallite degli ultimi 7 giorni su ${targets.length} siti?`, 'Rinvia DB falliti', names))) return;
+            btnRetryAll.textContent = 'In corso...'; btnRetryAll.disabled = true;
+            let totalOk = 0, totalFail = 0, errors = [];
+            await Promise.all(targets.map(async s => {
+                try {
+                    const fd = new FormData();
+                    fd.append('api_key', s.api_key);
+                    fd.append('days', '7');
+                    const resp = await fetch(s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/retry-supabase', { method: 'POST', body: fd });
+                    const json = await resp.json();
+                    totalOk   += json.ok   || 0;
+                    totalFail += json.fail || 0;
+                    if (json.error) errors.push((s.site_name || s.site_url) + ': ' + json.error);
+                } catch(e) { errors.push((s.site_name || s.site_url) + ': errore connessione'); }
+            }));
+            btnRetryAll.textContent = '↺ Rinvia DB falliti'; btnRetryAll.disabled = false;
+            const msg = `✓ OK: ${totalOk}   ✗ Fail: ${totalFail}` + (errors.length ? '\n\n' + errors.join('\n') : '');
+            if2Modal(msg);
+        });
+    }
 
     const btnUpdateAll = document.getElementById('btn-update-all');
     if (btnUpdateAll) {
@@ -521,11 +548,11 @@ async function loadSites(pluginName, silent = false) {
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             btnUpdateAll.disabled = true;
-            // In PARALLELO: un sito lento a rispondere non deve bloccare gli altri
-            // (col vecchio for sequenziale il primo sito appeso fermava tutti gli altri).
-            await Promise.all(outdatedBtns.map(btn =>
-                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
-            ));
+            // SEQUENZIALE: un sito alla volta → evita che N siti scarichino da GitHub
+            // in parallelo e ricevano 429 Too Many Requests.
+            for (const btn of outdatedBtns) {
+                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true);
+            }
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
@@ -955,15 +982,24 @@ function if2Confirm(message, title = 'Conferma', listItems = null) {
 }
 
 // ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
-async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm) {
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
     if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
     btn.textContent = 'Aggiornamento in corso...';
     btn.disabled = true;
     try {
+        let body;
+        if (zipBlob) {
+            // ZIP già scaricato → invialo direttamente, evita richiesta a GitHub.
+            body = new FormData();
+            body.append('api_key', apiKey);
+            body.append('plugin_zip', zipBlob, 'plugin.zip');
+        } else {
+            body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
+        }
         const resp = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', {
             method: 'POST',
-            body: new URLSearchParams({ api_key: apiKey, download_url: downloadUrl }),
+            body,
         });
         let json = {};
         try { json = await resp.json(); } catch {}
