@@ -546,10 +546,22 @@ async function loadSites(pluginName, silent = false) {
             if (!outdatedBtns.length) return;
             const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
-            btnUpdateAll.textContent = 'Aggiornamento in corso...';
+            btnUpdateAll.textContent = 'Download ZIP...';
             btnUpdateAll.disabled = true;
-            await Promise.all(outdatedBtns.map(btn =>
-                updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true)
+            // Scarica lo ZIP una volta nel browser poi lo invia come blob a ogni sito.
+            // Siti nuovi (≥2.2.362) usano il blob → zero hit su GitHub.
+            // Siti vecchi ricevono anche download_url ma scaglionata di 300ms → no 429.
+            const dlUrl = outdatedBtns[0].dataset.dl;
+            let zipBlob = null;
+            try {
+                const r = await fetch(dlUrl);
+                if (r.ok) zipBlob = await r.blob();
+            } catch {}
+            btnUpdateAll.textContent = 'Aggiornamento in corso...';
+            await Promise.all(outdatedBtns.map((btn, i) =>
+                new Promise(res => setTimeout(res, i * 300)).then(() =>
+                    updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob)
+                )
             ));
             btnUpdateAll.textContent = 'Tutti aggiornati!';
             setTimeout(() => loadSites(currentPlugin), 3000);
@@ -988,9 +1000,11 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
     try {
         let body;
         if (zipBlob) {
-            // ZIP già scaricato → invialo direttamente, evita richiesta a GitHub.
+            // ZIP già scaricato → invialo direttamente; manda anche download_url
+            // così i siti vecchi (< 2.2.362) possono usarlo come fallback.
             body = new FormData();
             body.append('api_key', apiKey);
+            body.append('download_url', downloadUrl);
             body.append('plugin_zip', zipBlob, 'plugin.zip');
         } else {
             body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
@@ -1015,6 +1029,11 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
                 try { await pingLive(siteUrl, apiKey); } catch {}
                 setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000);
             }, 2000);
+        } else if (resp.status === 429) {
+            // Too Many Requests: riprova automaticamente dopo 5s senza aprire modal.
+            btn.textContent = 'Riprova (429)...';
+            await new Promise(res => setTimeout(res, 5000));
+            await updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, true, zipBlob);
         } else {
             btn.textContent = 'Errore — riprova';
             btn.style.background = 'var(--red, #ef4444)';
