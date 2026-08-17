@@ -212,7 +212,7 @@ async function loadPlugins(silent = false) {
     const thirtyAgo = new Date(now - 30 * 86400000);
 
     const [r1, r2, r3] = await Promise.all([
-        _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version'),
+        _SBq.from('mon_sites').select('plugin_name, site_id, last_heartbeat, plugin_version, site_url, site_name'),
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
         _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
     ]);
@@ -253,15 +253,21 @@ async function loadPlugins(silent = false) {
     const dailyGlobal = {};
     for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyGlobal[d.toISOString().slice(0,10)] = {}; }
     const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
+    const siteLabel = {}; (sites || []).forEach(s => { siteLabel[s.site_id] = s.site_name || s.site_url || s.site_id; });
+    // conteggi giornalieri per singolo sito (compilazioni reali, non siti unici)
+    const dailyPerSite = {};
+    for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyPerSite[d.toISOString().slice(0,10)] = {}; }
     (eventsAll || []).forEach(e => {
         const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
         if (dailyGlobal[day] !== undefined) {
             if (!dailyGlobal[day][pn]) dailyGlobal[day][pn] = new Set();
             dailyGlobal[day][pn].add(e.site_id);
         }
+        if (dailyPerSite[day] !== undefined) dailyPerSite[day][e.site_id] = (dailyPerSite[day][e.site_id] || 0) + 1;
     });
     const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
     const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
+    const activeSiteIds = [...new Set((eventsAll || []).map(e => e.site_id))].sort((a,b) => (siteLabel[a]||'').localeCompare(siteLabel[b]||''));
 
     const list = Object.values(plugins);
     if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
@@ -285,7 +291,25 @@ async function loadPlugins(silent = false) {
                 <button class="chart-toggle-btn" data-range="30">30 giorni</button>
             </div></div>
             <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
-        </div>` : ''}`;
+        </div>` : ''}
+        <div class="card" style="margin-top:24px">
+            <div class="card-header">
+                <span class="card-title">Compilazioni form giornaliere</span>
+                <select id="hotel-filter" style="font-family:inherit;font-size:12px;padding:4px 8px;border:1px solid #e8e8f0;border-radius:6px;color:#333;background:#fff;cursor:pointer">
+                    <option value="">— Tutti gli hotel —</option>
+                    ${activeSiteIds.map(sid => `<option value="${esc(sid)}">${esc(siteLabel[sid] || sid)}</option>`).join('')}
+                </select>
+            </div>
+            <div style="padding:0 26px 20px;overflow-x:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="border-bottom:2px solid #f0f0f0">
+                        <th style="text-align:left;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">DATA</th>
+                        <th style="text-align:right;padding:10px 8px;color:#999;font-weight:600;font-size:11px;letter-spacing:.04em">RICHIESTE</th>
+                    </tr></thead>
+                    <tbody id="daily-req-body"></tbody>
+                </table>
+            </div>
+        </div>`;
 
     el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
     document.querySelectorAll('.sw-stat-card[data-action]').forEach(c => { c.style.cursor = 'pointer'; c.addEventListener('click', () => loadErrors()); });
@@ -301,6 +325,25 @@ async function loadPlugins(silent = false) {
         buildGC(7);
         document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
     }
+
+    // Tabella compilazioni giornaliere
+    const allDates = Object.keys(dailyPerSite).reverse();
+    function buildDailyTable(filterSite) {
+        const tbody = document.getElementById('daily-req-body');
+        if (!tbody) return;
+        tbody.innerHTML = allDates.map(date => {
+            const counts = dailyPerSite[date] || {};
+            const total = filterSite ? (counts[filterSite] || 0) : Object.values(counts).reduce((s,v)=>s+v,0);
+            const label = new Date(date).toLocaleDateString('it-IT',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+            return `<tr style="border-bottom:1px solid #f5f5f8">
+                <td style="padding:9px 8px;color:#333">${esc(label)}</td>
+                <td style="padding:9px 8px;text-align:right;font-weight:${total>0?'700':'400'};color:${total>0?'#d82d6b':'#bbb'}">${total}</td>
+            </tr>`;
+        }).join('');
+    }
+    buildDailyTable('');
+    const hotelFilter = document.getElementById('hotel-filter');
+    if (hotelFilter) hotelFilter.addEventListener('change', () => buildDailyTable(hotelFilter.value));
 }
 
 function pluginCardHtml(p) {
