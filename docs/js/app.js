@@ -612,10 +612,11 @@ async function loadSites(pluginName, silent = false) {
                 else { done++; setProgress(); }
             }));
 
-            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta con raw.githubusercontent.com.
+            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta, 3s di pausa tra uno e l'altro.
             for (const btn of needsUrlBtns) {
                 await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
                 done++; setProgress();
+                if (done < total) await new Promise(r => setTimeout(r, 3000));
             }
 
             btnUpdateAll.textContent = 'Tutti aggiornati!';
@@ -633,7 +634,7 @@ async function loadSites(pluginName, silent = false) {
                 if2Modal('✓ Ultima versione già installata.');
                 return;
             }
-            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn);
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn);
         });
     });
     el.querySelectorAll('.btn-ping').forEach(btn => {
