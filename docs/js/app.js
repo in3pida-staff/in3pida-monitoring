@@ -182,7 +182,7 @@ function latestInfo(pluginName) {
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
-    const urls = { 'in3pida-form-2': `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip` };
+    const urls = { 'in3pida-form-2': `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip` };
     return { version, date, download_url: urls[pluginName] || '' };
 }
 
@@ -559,7 +559,7 @@ async function loadSites(pluginName, silent = false) {
             } catch {}
             btnUpdateAll.textContent = 'Aggiornamento in corso...';
             await Promise.all(outdatedBtns.map((btn, i) =>
-                new Promise(res => setTimeout(res, i * 300)).then(() =>
+                new Promise(res => setTimeout(res, i * 2000)).then(() =>
                     updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob)
                 )
             ));
