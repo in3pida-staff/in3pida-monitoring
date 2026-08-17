@@ -540,7 +540,7 @@ async function loadSites(pluginName, silent = false) {
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>
@@ -587,6 +587,10 @@ async function loadSites(pluginName, silent = false) {
                 } catch(e) { errors.push((s.site_name || s.site_url) + ': errore connessione'); }
             }));
             btnRetryAll.textContent = '↺ Rinvia DB falliti'; btnRetryAll.disabled = false;
+            const ts = new Date().toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+            try { localStorage.setItem('if2_retry_result', JSON.stringify({ok:totalOk,fail:totalFail,ts})); } catch(e){}
+            const span = document.getElementById('retry-last-result');
+            if (span) span.textContent = `Ultimo rinvio: ✓ ${totalOk} ✗ ${totalFail} — ${ts}`;
             const msg = `✓ OK: ${totalOk}   ✗ Fail: ${totalFail}` + (errors.length ? '\n\n' + errors.join('\n') : '');
             if2Modal(msg);
         });
