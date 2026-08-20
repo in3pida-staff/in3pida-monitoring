@@ -240,7 +240,7 @@ async function loadPlugins(silent = false) {
     // Siti "FERMI": online ma senza richieste da > 24h pur avendone storico (background morto, come Golf 23/06).
     // È un PROBLEMA da segnalare anche se non c'è un errore registrato (lì non arriva proprio nulla).
     const lastSubmit = {};
-    (eventsAll || []).forEach(e => { if (!lastSubmit[e.site_id]) lastSubmit[e.site_id] = e.created_at; });
+    (eventsAll || []).forEach(e => { lastSubmit[e.site_id] = e.created_at; });
     const SILENT_MS = 24 * 3600000;
     const silentSites = new Set();
     (sites || []).forEach(s => {
