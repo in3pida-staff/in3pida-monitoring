@@ -213,14 +213,25 @@ async function loadPlugins(silent = false) {
     const yesterday = new Date(now - 86400000);
     const thirtyAgo = new Date(now - 30 * 86400000);
 
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2] = await Promise.all([
         _SBq.from('mon_sites').select('plugin_name, site_id, site_name, last_heartbeat, plugin_version'),
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type', 'form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
     ]);
-    const err = r1.error || r2.error || r3.error;
+    const err = r1.error || r2.error;
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
-    const sites = r1.data; const errStats = r2.data; const eventsAll = r3.data;
+    const sites = r1.data; const errStats = r2.data;
+    const eventsAll = await (async () => {
+        const all = [], pageSize = 1000, fromTs = thirtyAgo.toISOString();
+        let from = 0;
+        while (true) {
+            const { data } = await _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', fromTs).order('created_at',{ascending:true}).range(from, from + pageSize - 1);
+            if (!data || !data.length) break;
+            all.push(...data);
+            if (data.length < pageSize) break;
+            from += pageSize;
+        }
+        return all;
+    })();
     updateLatestVersions(sites);
 
     const sitesWithErrors = new Set((errStats || [])
@@ -393,7 +404,7 @@ async function loadErrors(silent = false) {
     const [{ data: errStats }, { data: allSites }, { data: ev30 }] = await Promise.all([
         _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
         _SBq.from('mon_sites').select('*'),
-        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(50000)
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(1000)
     ]);
     const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
     const bysite = {};
