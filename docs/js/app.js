@@ -221,16 +221,17 @@ async function loadPlugins(silent = false) {
     if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
     const sites = r1.data; const errStats = r2.data;
     const eventsAll = await (async () => {
-        const all = [], pageSize = 1000, fromTs = thirtyAgo.toISOString();
-        let from = 0;
-        while (true) {
-            const { data } = await _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', fromTs).order('created_at',{ascending:true}).range(from, from + pageSize - 1);
-            if (!data || !data.length) break;
-            all.push(...data);
-            if (data.length < pageSize) break;
-            from += pageSize;
-        }
-        return all;
+        // Prima era paginazione OFFSET sequenziale (18 richieste in fila che rallentavano man mano che gli
+        // eventi crescono → la dashboard "girava a vuoto"). Ora: conto le righe e scarico TUTTE le pagine
+        // IN PARALLELO, così il tempo totale ≈ la pagina più lenta, non la somma. Dati finali identici.
+        const pageSize = 1000, fromTs = thirtyAgo.toISOString();
+        const base = () => _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', fromTs).order('created_at',{ascending:true});
+        const { count } = await _SBq.from('mon_events').select('site_id', { count: 'exact', head: true }).eq('event_type','form_submitted').gte('created_at', fromTs);
+        const pages = Math.max(1, Math.ceil((count || 0) / pageSize));
+        const results = await Promise.all(
+            Array.from({ length: pages }, (_, i) => base().range(i * pageSize, i * pageSize + pageSize - 1))
+        );
+        return results.flatMap(r => r.data || []);
     })();
     updateLatestVersions(sites);
 
