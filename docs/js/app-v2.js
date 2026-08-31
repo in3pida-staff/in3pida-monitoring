@@ -606,40 +606,27 @@ async function loadSites(pluginName, silent = false) {
             btnUpdateAll.textContent = 'Download ZIP...';
             btnUpdateAll.disabled = true;
 
-            // 1. Scarica lo ZIP una volta nel browser (CDN poi raw come fallback).
-            //    Salviamo come ArrayBuffer per poter creare un Blob fresco per ogni upload
-            //    ed evitare conflitti quando più fetch leggono lo stesso Blob in parallelo.
-            let zipArray = null;
-            for (const url of [outdatedBtns[0].dataset.dl, outdatedBtns[0].dataset.rawdl].filter(Boolean)) {
-                try { const r = await fetch(url); if (r.ok) { zipArray = await r.arrayBuffer(); break; } } catch {}
-            }
-
-            // 2. Aggiorna i siti max 5 alla volta (evita conflitti con 68 upload paralleli).
+            // Replica esatta del singolo bottone, uno alla volta per ogni sito.
+            // Ogni sito scarica il proprio blob — identico a cliccare "Aggiorna" manualmente.
             let done = 0, failed = 0;
             const total = outdatedBtns.length;
             const setProgress = () => { btnUpdateAll.textContent = `Aggiornamento ${done + failed}/${total}...`; };
             setProgress();
 
-            const CONCURRENCY = 1; // sequenziale: identico a premere "Aggiorna" uno alla volta
-            const needsUrlBtns = [];
-            let idx = 0;
-            const workers = Array.from({ length: Math.min(CONCURRENCY, outdatedBtns.length) }, async () => {
-                while (idx < outdatedBtns.length) {
-                    const btn = outdatedBtns[idx++];
-                    const zipBlob = zipArray ? new Blob([zipArray]) : null;
-                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true);
-                    if (result === 'needs_url') needsUrlBtns.push(btn);
-                    else { if (result === 'error') failed++; else done++; setProgress(); }
+            for (const btn of outdatedBtns) {
+                btn.textContent = 'Download ZIP...'; btn.disabled = true;
+                let zipBlob = null;
+                for (const url of [btn.dataset.dl, btn.dataset.rawdl].filter(Boolean)) {
+                    try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
                 }
-            });
-            await Promise.all(workers);
-
-            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta, 3s di pausa.
-            for (const btn of needsUrlBtns) {
-                const r = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
-                if (r === 'error') failed++; else done++;
+                const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true);
+                if (result === 'needs_url') {
+                    const r2 = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
+                    if (r2 === 'error') failed++; else done++;
+                } else {
+                    if (result === 'error') failed++; else done++;
+                }
                 setProgress();
-                if (done + failed < total) await new Promise(r => setTimeout(r, 3000));
             }
 
             btnUpdateAll.textContent = failed ? `✓ ${done} aggiornati · ${failed} non raggiungibili` : `✓ ${done} aggiornati!`;
