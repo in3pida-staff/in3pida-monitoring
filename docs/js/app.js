@@ -627,7 +627,7 @@ async function loadSites(pluginName, silent = false) {
                 while (idx < outdatedBtns.length) {
                     const btn = outdatedBtns[idx++];
                     const zipBlob = zipArray ? new Blob([zipArray]) : null;
-                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob, true);
+                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true);
                     if (result === 'needs_url') needsUrlBtns.push(btn);
                     else { if (result === 'error') failed++; else done++; setProgress(); }
                 }
