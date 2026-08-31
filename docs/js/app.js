@@ -605,10 +605,11 @@ async function loadSites(pluginName, silent = false) {
             btnUpdateAll.textContent = 'Download ZIP...';
             btnUpdateAll.disabled = true;
 
-            // 1. Scarica lo ZIP una volta nel browser.
-            const dlUrl = outdatedBtns[0].dataset.dl;
+            // 1. Scarica lo ZIP una volta nel browser (CDN poi raw come fallback).
             let zipBlob = null;
-            try { const r = await fetch(dlUrl); if (r.ok) zipBlob = await r.blob(); } catch {}
+            for (const url of [outdatedBtns[0].dataset.dl, outdatedBtns[0].dataset.rawdl].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
+            }
 
             // 2. Prova TUTTI i siti in parallelo con il blob (siti ≥2.2.362 lo gestiscono,
             //    zero richieste a GitHub). I siti vecchi tornano needsUrl=true.
@@ -646,9 +647,14 @@ async function loadSites(pluginName, silent = false) {
                 if2Modal('✓ Ultima versione già installata.');
                 return;
             }
+            const siteLabel = btn.dataset.name || btn.dataset.url || btn.dataset.site;
+            if (!(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+            btn.textContent = 'Download ZIP...'; btn.disabled = true;
             let zipBlob = null;
-            if (btn.dataset.dl) { try { const r = await fetch(btn.dataset.dl); if (r.ok) zipBlob = await r.blob(); } catch {} }
-            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, false, zipBlob);
+            for (const url of [btn.dataset.dl, btn.dataset.rawdl].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
+            }
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, true, zipBlob);
         });
     });
     el.querySelectorAll('.btn-ping').forEach(btn => {
@@ -944,10 +950,14 @@ async function loadSiteDetail(siteId, silent = false) {
     const btnDoUpdate = document.getElementById('btn-do-update');
     if (btnDoUpdate) {
         btnDoUpdate.addEventListener('click', async () => {
+            const siteLabel2 = site.site_name || site.site_url || siteId;
+            if (!(await if2Confirm('Aggiornare il plugin su «' + siteLabel2 + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+            btnDoUpdate.textContent = 'Download ZIP...'; btnDoUpdate.disabled = true;
             let zipBlob = null;
-            const dlUrl = li ? li.download_url : null;
-            if (dlUrl) { try { const r = await fetch(dlUrl); if (r.ok) zipBlob = await r.blob(); } catch {} }
-            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, false, zipBlob);
+            for (const url of [li ? li.download_url : null, li ? li.raw_url : null].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
+            }
+            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, true, zipBlob);
         });
     }
 
