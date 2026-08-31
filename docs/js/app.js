@@ -12,6 +12,7 @@ let currentView    = 'plugins';
 let currentPlugin  = null;
 let currentSite    = null;
 let latestVersions = {};
+const recentlyUpdated = new Set(); // site_id aggiornati in questa sessione → non tornare "old" prima del heartbeat
 let currentProfile = null;
 
 // ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
@@ -699,7 +700,7 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
         <td style="white-space:nowrap"><div class="row-actions">
             <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=!recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </div></td>
     </tr>`;
 }
@@ -1115,6 +1116,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             const r1 = await doFetch(fd);
             let j1 = {}; try { j1 = await r1.json(); } catch {}
             if (r1.ok && j1.success) {
+                recentlyUpdated.add(siteId);
                 btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
                 setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
                 return 'ok';
@@ -1131,6 +1133,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             let resp; try { resp = await doFetch(body); } catch(e) { showErr('Impossibile contattare il sito:\n' + e.message); return 'error'; }
             let json = {}; try { json = await resp.json(); } catch {}
             if (resp.ok && json.success) {
+                recentlyUpdated.add(siteId);
                 btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
                 setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
                 return 'ok';
