@@ -1,0 +1,1415 @@
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const _SBURL = 'https://yyauvoqjdzrbmebeafit.supabase.co';
+const _SBKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YXV2b3FqZHpyYm1lYmVhZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3OTM2MDAsImV4cCI6MjA5NTM2OTYwMH0.M6kD56PEO_UcJ68Vjquo03vuORjv62MflIzGLzYKN9w';
+const _SB  = window.supabase.createClient(_SBURL, _SBKEY);
+// Tutte le query passano dal client AUTENTICATO: dopo il login le letture avvengono come
+// utente autenticato. Le tabelle sono protette da RLS, quindi la sola chiave pubblica non
+// legge/scrive nulla — serve una sessione valida.
+const _SBq = _SB;
+
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+let currentView    = 'plugins';
+let currentPlugin  = null;
+let currentSite    = null;
+let latestVersions = {};
+const recentlyUpdated = new Set(); // site_id aggiornati in questa sessione → non tornare "old" prima del heartbeat
+let currentProfile = null;
+
+// ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
+const normalizeRecord = s => {
+    if (s.status !== 'error' || !s.error_message) return s;
+    const m = s.error_message.toLowerCase();
+    if (m.includes('already') || m.includes('contact_already') || m.includes('duplicat') || m.includes('409')) {
+        return {...s, status:'skipped'};
+    }
+    // CRM HotelDoor: un timeout (cURL 28) non è un errore reale — la richiesta arriva comunque (5xx/timeout = ok)
+    if (s.integration === 'crm' && (m.includes('timed out') || m.includes('curl error 28') || m.includes('operation timed out'))) {
+        return {...s, status:'skipped'};
+    }
+    return s;
+};
+const isValidRecord = (s, integ) => integ !== 'crm' || s.status !== 'error' || s.error_message;
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    // Richiede SEMPRE una sessione Supabase autenticata: nessun bypass locale.
+    // (Il vecchio "gate" con password fissa in localStorage è stato rimosso perché aggirabile.)
+    localStorage.removeItem('if2_gate');
+    let session = (await _SB.auth.getSession()).data.session;
+    if (!session) {
+        // Token scaduto ma refresh token ancora valido → rinnoviamo senza chiedere login
+        const { data } = await _SB.auth.refreshSession().catch(() => ({ data: {} }));
+        session = data.session || null;
+    }
+    if (!session) { window.location.href = 'login.html'; return; }
+
+    let profile;
+    try {
+        const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')),2000));
+        const profileRes = await Promise.race([
+            _SB.from('mon_profiles').select('*').eq('id', session.user.id).single(),
+            timeout
+        ]);
+        profile = profileRes?.data || null;
+    } catch(e) { profile = null; }
+    if (!profile) {
+        // Fallback: costruisce profilo dai dati di sessione
+        const email = session.user.email || '';
+        const isAdmin = email === 'mario@in3pida.it' || session.user.user_metadata?.role === 'admin';
+        if (!email) { await _SB.auth.signOut(); window.location.href = 'login.html'; return; }
+        profile = {
+            id: session.user.id,
+            email,
+            full_name: session.user.user_metadata?.full_name || email.split('@')[0],
+            role: isAdmin ? 'admin' : 'user',
+            avatar_url: session.user.user_metadata?.avatar_url || null
+        };
+    }
+
+    currentProfile = profile;
+    applyProfile(profile);
+
+    if (profile.role === 'admin') {
+        document.getElementById('nav-users').style.display = '';
+    }
+
+    await loadLatest();
+    loadPlugins();
+    updateErrorBadge();
+    setInterval(refresh, 60000);
+
+    document.getElementById('nav-home').addEventListener('click', loadPlugins);
+    document.getElementById('nav-plugin').addEventListener('click', loadPlugins);
+    document.getElementById('nav-errors').addEventListener('click', loadErrors);
+    document.getElementById('nav-users').addEventListener('click', loadUsers);
+    document.getElementById('nav-procedure').addEventListener('click', () => {
+        window.open('https://docs.google.com/document/d/1m06Z4Qtbomit8cjJyu7Ac7PvDnTgf2j6Nq3kzau43ac/edit?usp=drive_link', '_blank', 'noopener');
+    });
+    document.getElementById('nav-info').addEventListener('click', () => {
+        document.getElementById('info-overlay').style.display = 'flex';
+    });
+
+    const pill = document.getElementById('user-pill');
+    const dropdown = document.getElementById('user-dropdown');
+    pill.addEventListener('click', e => { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none'; });
+    document.addEventListener('click', () => { dropdown.style.display = 'none'; });
+    dropdown.addEventListener('click', e => e.stopPropagation());
+
+    document.getElementById('dd-logout').addEventListener('click', async () => { localStorage.removeItem('if2_gate'); try { await _SB.auth.signOut(); } catch(e){} window.location.href = 'login.html'; });
+    document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
+
+    const infoOverlay = document.getElementById('info-overlay');
+    document.getElementById('info-close').addEventListener('click', () => { infoOverlay.style.display = 'none'; });
+    infoOverlay.addEventListener('click', e => { if (e.target === infoOverlay) infoOverlay.style.display = 'none'; });
+
+    const profileOverlay = document.getElementById('profile-overlay');
+    document.getElementById('profile-close').addEventListener('click', () => { profileOverlay.style.display = 'none'; });
+    profileOverlay.addEventListener('click', e => { if (e.target === profileOverlay) profileOverlay.style.display = 'none'; });
+    document.getElementById('profile-avatar-input').addEventListener('change', uploadAvatar);
+    document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
+});
+
+// ─── PROFILO ─────────────────────────────────────────────────────────────────
+function applyProfile(p) {
+    const name = p.full_name || p.email || 'Utente';
+    document.getElementById('nav-name').textContent = name;
+    document.getElementById('dd-name').textContent  = name;
+    document.getElementById('dd-email').textContent = p.email || '';
+    ['nav-avatar','dd-avatar','profile-avatar-preview'].forEach(id => {
+        const el = document.getElementById(id);
+        if (p.avatar_url) el.innerHTML = `<img src="${esc(p.avatar_url)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
+        else              el.textContent = name.charAt(0).toUpperCase();
+    });
+}
+function openProfileModal() {
+    document.getElementById('profile-name').value  = currentProfile?.full_name  || '';
+    document.getElementById('profile-email').value = currentProfile?.email || '';
+    document.getElementById('profile-overlay').style.display = 'flex';
+}
+function uploadAvatar(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 80; canvas.height = 80;
+            canvas.getContext('2d').drawImage(img, 0, 0, 80, 80);
+            const avatar = canvas.toDataURL('image/jpeg', 0.85);
+            currentProfile = { ...currentProfile, avatar_url: avatar };
+            applyProfile(currentProfile);
+        };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+async function saveProfile() {
+    const name = document.getElementById('profile-name').value.trim();
+    if (!currentProfile) return;
+    const updates = { full_name: name || currentProfile.full_name, avatar_url: currentProfile.avatar_url || null };
+    await _SB.from('mon_profiles').update(updates).eq('id', currentProfile.id);
+    currentProfile = { ...currentProfile, ...updates };
+    applyProfile(currentProfile);
+    document.getElementById('profile-overlay').style.display = 'none';
+}
+
+// ─── VERSIONI ─────────────────────────────────────────────────────────────────
+async function loadLatest() {
+    try {
+        const r = await fetch('releases/latest.json?_=' + Date.now());
+        if (r.ok) latestVersions = await r.json();
+    } catch {}
+}
+function updateLatestVersions(sites) {
+    (sites || []).forEach(s => {
+        if (!s.plugin_version) return;
+        const cur = latestVersions[s.plugin_name];
+        const curVer = cur ? (typeof cur === 'object' ? cur.version : cur) : null;
+        if (!curVer || semverGt(s.plugin_version, curVer)) {
+            latestVersions[s.plugin_name] = { version: s.plugin_version, date: null };
+        }
+    });
+}
+function semverGt(a, b) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        if ((pa[i]||0) > (pb[i]||0)) return true;
+        if ((pa[i]||0) < (pb[i]||0)) return false;
+    }
+    return false;
+}
+function latestInfo(pluginName) {
+    const v = latestVersions[pluginName];
+    if (!v) return null;
+    const version = typeof v === 'object' ? v.version : v;
+    const date    = typeof v === 'object' ? v.date    : null;
+    const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip`;
+    const cdn_url = `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip`;
+    const urls = { 'in3pida-form-2': cdn_url };
+    return { version, date, download_url: urls[pluginName] || '', raw_url };
+}
+
+// ─── NAV ──────────────────────────────────────────────────────────────────────
+function setActiveNav(id) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    const el = document.getElementById(id); if (el) el.classList.add('active');
+}
+async function refresh() {
+    await loadLatest();
+    updateErrorBadge();
+    if      (currentView === 'plugins')              loadPlugins(true);
+    else if (currentView === 'sites'  && currentPlugin) loadSites(currentPlugin, true);
+    else if (currentView === 'site'   && currentSite)   loadSiteDetail(currentSite, true);
+    else if (currentView === 'errors')               loadErrors(true);
+}
+
+// ─── VIEW: PLUGIN ─────────────────────────────────────────────────────────────
+async function loadPlugins(silent = false) {
+    currentView = 'plugins'; showView('plugins'); setActiveNav('nav-plugin');
+    setBreadcrumb([{ label: 'Home', active: true }]);
+    const el = document.getElementById('plugins-container');
+    if (!silent) el.innerHTML = loadingHtml();
+
+    const now = new Date();
+    const yesterday = new Date(now - 86400000);
+    const thirtyAgo = new Date(now - 30 * 86400000);
+
+    const [r1, r2] = await Promise.all([
+        _SBq.from('mon_sites').select('plugin_name, site_id, site_name, last_heartbeat, plugin_version'),
+        _SBq.from('mon_integration_stats').select('site_id, integration, error_message').eq('status', 'error').gte('created_at', yesterday.toISOString()),
+    ]);
+    const err = r1.error || r2.error;
+    if (err) { el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore Supabase</div><div class="empty-sub" style="color:red;font-size:12px;max-width:600px;margin:0 auto">${esc(err.message || JSON.stringify(err))}</div></div>`; return; }
+    const sites = r1.data; const errStats = r2.data;
+    const eventsAll = await (async () => {
+        // Prima era paginazione OFFSET sequenziale (18 richieste in fila che rallentavano man mano che gli
+        // eventi crescono → la dashboard "girava a vuoto"). Ora: conto le righe e scarico TUTTE le pagine
+        // IN PARALLELO, così il tempo totale ≈ la pagina più lenta, non la somma. Dati finali identici.
+        const pageSize = 1000, fromTs = thirtyAgo.toISOString();
+        const base = () => _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', fromTs).order('created_at',{ascending:true});
+        const { count } = await _SBq.from('mon_events').select('site_id', { count: 'exact', head: true }).eq('event_type','form_submitted').gte('created_at', fromTs);
+        const pages = Math.max(1, Math.ceil((count || 0) / pageSize));
+        const results = await Promise.all(
+            Array.from({ length: pages }, (_, i) => base().range(i * pageSize, i * pageSize + pageSize - 1))
+        );
+        return results.flatMap(r => r.data || []);
+    })();
+    updateLatestVersions(sites);
+
+    const sitesWithErrors = new Set((errStats || [])
+        .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
+        .map(e => e.site_id));
+    // Siti "FERMI": online ma senza richieste da > 24h pur avendone storico (background morto, come Golf 23/06).
+    // È un PROBLEMA da segnalare anche se non c'è un errore registrato (lì non arriva proprio nulla).
+    const lastSubmit = {};
+    (eventsAll || []).forEach(e => { lastSubmit[e.site_id] = e.created_at; });
+    const SILENT_MS = 24 * 3600000;
+    const silentSites = new Set();
+    (sites || []).forEach(s => {
+        const hrs2 = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
+        const last = lastSubmit[s.site_id];
+        if (hrs2 < 25 && last && (now - new Date(last).getTime()) > SILENT_MS) silentSites.add(s.site_id);
+    });
+    const problemSites = new Set([...sitesWithErrors, ...silentSites]);
+    const plugins = {};
+    (sites || []).forEach(s => {
+        const nm = s.plugin_name;
+        if (!plugins[nm]) plugins[nm] = { name: nm, total: 0, active: 0, inactive: 0, errors: 0, versions: {} };
+        const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat)) / 3600000 : 9999;
+        plugins[nm].total++;
+        if (hrs < 25) plugins[nm].active++; else plugins[nm].inactive++;
+        if (problemSites.has(s.site_id)) plugins[nm].errors++;
+        if (s.plugin_version) plugins[nm].versions[s.plugin_version] = (plugins[nm].versions[s.plugin_version] || 0) + 1;
+    });
+    Object.values(plugins).forEach(p => {
+        p.status = (p.errors > 0 && p.active > 0) ? 'red' : (p.active === 0) ? 'grey' : (p.inactive > 0 || p.errors > 0) ? 'yellow' : 'green';
+    });
+
+    const dailyGlobal = {};
+    for (let i = 29; i >= 0; i--) { const d = new Date(now - i * 86400000); dailyGlobal[d.toISOString().slice(0,10)] = {}; }
+    const sitePlugin = {}; (sites || []).forEach(s => { sitePlugin[s.site_id] = s.plugin_name; });
+    (eventsAll || []).forEach(e => {
+        const day = e.created_at.slice(0,10); const pn = sitePlugin[e.site_id] || 'unknown';
+        if (dailyGlobal[day] !== undefined) {
+            if (!dailyGlobal[day][pn]) dailyGlobal[day][pn] = new Set();
+            dailyGlobal[day][pn].add(e.site_id);
+        }
+    });
+    const pluginNames = [...new Set((sites || []).map(s => s.plugin_name))];
+    const dailySeries = pluginNames.map(pn => ({ plugin: pn, data: Object.entries(dailyGlobal).map(([date, sets]) => ({ date, count: sets[pn] ? sets[pn].size : 0 })) }));
+
+    const list = Object.values(plugins);
+    const if2Sites = (sites||[]).filter(s => s.plugin_name==='in3pida-form-2');
+    if (list.length === 0) { el.innerHTML = emptyHtml('Nessun plugin registrato', 'I plugin appariranno quando i siti invieranno il primo segnale.'); setHero('Monitoring', 'in3pida Monitoring', []); return; }
+
+    const active = list.reduce((s, p) => s + p.active, 0);
+    const errors = list.reduce((s, p) => s + p.errors, 0);
+    const firstPlugin = pluginNames[0] || null;
+    setHero('Monitoring', 'in3pida Monitoring', [
+        { num: list.length, label: 'Plugin monitorati' },
+        { num: active,  label: 'Plugin attivi',    onclick: firstPlugin ? () => loadSites(firstPlugin) : null },
+        { num: errors,  label: 'Siti con errori',  onclick: loadErrors },
+    ]);
+
+    el.innerHTML = `
+        <p class="section-title">Plugin installati</p>
+        <div class="plugins-grid">${list.map(pluginCardHtml).join('')}</div>
+        ${dailySeries.length > 0 ? `<div class="card" style="margin-top:24px">
+            <div class="card-header"><span class="card-title">Installazioni con richieste</span>
+            <div class="chart-toggle" id="global-toggle">
+                <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+            </div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-global" height="80"></canvas></div>
+        </div>` : ''}
+        ${if2Sites.length > 0 ? `<div class="card" style="margin-top:24px">
+            <div class="card-header"><span class="card-title">Compilazioni form</span>
+            <div style="display:flex;align-items:center;gap:12px">
+                <select id="filter-hotel-compilazioni-home" style="font-family:Montserrat;font-size:12px;border:1px solid #e0e0e0;border-radius:6px;padding:4px 8px;color:#333;background:#fff">
+                    <option value="">Tutti gli hotel</option>
+                    ${if2Sites.map(s=>`<option value="${esc(s.site_id)}">${esc(s.site_name||s.site_id)}</option>`).join('')}
+                </select>
+                <div class="chart-toggle" id="compilazioni-home-toggle">
+                    <button class="chart-toggle-btn active" data-range="7">7 giorni</button>
+                    <button class="chart-toggle-btn" data-range="30">30 giorni</button>
+                </div>
+            </div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-compilazioni-home" height="80"></canvas></div>
+        </div>` : ''}`;
+
+    el.querySelectorAll('.plugin-card').forEach(card => card.addEventListener('click', () => loadSites(card.dataset.name)));
+    document.querySelectorAll('.sw-stat-card[data-action]').forEach(c => { c.style.cursor = 'pointer'; c.addEventListener('click', () => loadErrors()); });
+
+    if (dailySeries.length > 0 && document.getElementById('chart-global')) {
+        const colors = ['#d82d6b','#009bb9','#181834']; let gc = null;
+        function buildGC(range) {
+            const labels = dailySeries[0].data.slice(-range).map(r => new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+            const datasets = dailySeries.map((s,i) => { const c = colors[i%colors.length]; return { label: displayName(s.plugin), data: s.data.slice(-range).map(r=>r.count), borderColor:c, borderWidth:2.5, pointBackgroundColor:c, pointRadius:3, pointHoverRadius:6, fill:i===0, backgroundColor:i===0?(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,'rgba(216,45,107,0.15)');g.addColorStop(1,'rgba(216,45,107,0)');return g;}:'transparent', tension:0.4 }; });
+            if (gc) gc.destroy();
+            gc = new Chart(document.getElementById('chart-global'),{ type:'line', data:{labels,datasets}, options:{ plugins:{legend:{display:dailySeries.length>1,labels:{font:{family:'Montserrat',size:11},boxWidth:12}}}, scales:{x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}},y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}}}}});
+        }
+        buildGC(7);
+        document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#global-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); buildGC(parseInt(btn.dataset.range)); }); });
+    }
+
+    if (if2Sites.length > 0 && document.getElementById('chart-compilazioni-home')) {
+        const if2SiteIds = new Set(if2Sites.map(s => s.site_id));
+        const evIf2 = (eventsAll||[]).filter(e => if2SiteIds.has(e.site_id));
+        let cc = null, ccRange = 7, ccFilter = '';
+        const daily30 = {};
+        for (let i = 29; i >= 0; i--) { const d = new Date(now - i*86400000); daily30[d.toISOString().slice(0,10)] = 0; }
+        function buildCC(range) {
+            const days = Object.keys(daily30).slice(-range);
+            const counts = {}; days.forEach(d => { counts[d] = 0; });
+            evIf2.forEach(e => { const day = e.created_at.slice(0,10); if (counts[day]!==undefined && (!ccFilter||e.site_id===ccFilter)) counts[day]++; });
+            const canvas = document.getElementById('chart-compilazioni-home'); if (!canvas) return;
+            if (cc) cc.destroy();
+            const c = '#d82d6b';
+            cc = new Chart(canvas, { type:'line', data:{ labels:days.map(d=>new Date(d+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short'})), datasets:[{ label:'Compilazioni', data:days.map(d=>counts[d]), borderColor:c, borderWidth:2.5, pointBackgroundColor:c, pointRadius:3, pointHoverRadius:6, fill:true, backgroundColor:(ctx)=>{ const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height); g.addColorStop(0,'rgba(216,45,107,0.15)'); g.addColorStop(1,'rgba(216,45,107,0)'); return g; }, tension:0.4 }] }, options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}}, y:{beginAtZero:true,ticks:{stepSize:1,font:{family:'Montserrat',size:11},color:'#999'},grid:{color:'#f4f4f8'}} } } });
+        }
+        buildCC(7);
+        document.getElementById('filter-hotel-compilazioni-home')?.addEventListener('change', e => { ccFilter=e.target.value; buildCC(ccRange); });
+        document.querySelectorAll('#compilazioni-home-toggle .chart-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll('#compilazioni-home-toggle .chart-toggle-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); ccRange=parseInt(btn.dataset.range); buildCC(ccRange); }); });
+    }
+}
+
+function pluginCardHtml(p) {
+    const pills = Object.entries(p.versions||{}).map(([v,c]) => `<span class="version-pill">v${esc(v)}${c>1?' ×'+c:''}</span>`).join('') || '<span class="version-pill">—</span>';
+    const problemBadge = p.errors > 0
+        ? `<span class="plugin-problem-badge err">⚠ ${p.errors} ${p.errors === 1 ? 'sito con problema' : 'siti con problemi'}</span>`
+        : p.inactive > 0
+        ? `<span class="plugin-problem-badge warn">⚠ ${p.inactive} senza segnale</span>`
+        : '';
+    return `<div class="plugin-card ${esc(p.status)}" data-name="${esc(p.name)}">
+        <div class="plugin-card-left">
+            <div class="plugin-card-top">${dot(p.status,true)}<div class="plugin-card-name">${esc(displayName(p.name))}</div>${problemBadge}</div>
+            <div class="plugin-card-versions">${pills}</div>
+        </div>
+        <div class="plugin-card-right">
+            <div class="plugin-stat"><div class="plugin-stat-num">${p.total}</div><div class="plugin-stat-label">Siti installati</div></div>
+            <div class="plugin-stat"><div class="plugin-stat-num online">${p.active}</div><div class="plugin-stat-label">Plugin attivi</div></div>
+            <div class="plugin-stat"><div class="plugin-stat-num offline">${p.inactive}</div><div class="plugin-stat-label">Nessun segnale</div></div>
+            <div class="plugin-card-arrow">›</div>
+        </div>
+    </div>`;
+}
+
+// ─── VIEW: ERRORI ─────────────────────────────────────────────────────────────
+async function updateErrorBadge() {
+    const badge = document.getElementById('err-badge');
+    if (!badge) return;
+    try {
+        const yesterday = new Date(Date.now() - 86400000);
+        const { data } = await _SBq.from('mon_integration_stats')
+            .select('site_id, integration, error_message')
+            .eq('status','error').gte('created_at', yesterday.toISOString());
+        // siti distinti con errore VERO (esclude CRM senza messaggio = esterno, e timeout CRM/duplicati declassati)
+        const sitesInError = new Set((data||[])
+            .filter(e => isValidRecord({ status:'error', error_message:e.error_message }, e.integration))
+            .filter(e => normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message }).status === 'error')
+            .map(e => e.site_id));
+        const n = sitesInError.size;
+        if (n > 0) { badge.textContent = n; badge.style.display = ''; }
+        else { badge.style.display = 'none'; }
+    } catch (e) { badge.style.display = 'none'; }
+}
+
+async function loadErrors(silent = false) {
+    currentView = 'errors'; showView('errors'); setActiveNav('nav-errors');
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:'Siti con errori',active:true}]);
+    setHero('Monitoring','Siti con errori',[]);
+    const el = document.getElementById('errors-container');
+    if (!silent) el.innerHTML = loadingHtml();
+
+    const yesterday = new Date(Date.now() - 86400000);
+    const thirtyAgo = new Date(Date.now() - 30 * 86400000);
+    const [{ data: errStats }, { data: allSites }, { data: ev30 }] = await Promise.all([
+        _SBq.from('mon_integration_stats').select('site_id, integration, error_message, created_at').eq('status','error').gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false}),
+        _SBq.from('mon_sites').select('*'),
+        _SBq.from('mon_events').select('site_id, created_at').eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(1000)
+    ]);
+    const siteMap = {}; (allSites||[]).forEach(s => { siteMap[s.site_id] = s; });
+    const bysite = {};
+    (errStats||[]).forEach(e => {
+        // Scarta ciò che non è un errore reale: timeout CRM (cURL 28) e duplicati vengono declassati da normalizeRecord
+        const n = normalizeRecord({ status:'error', integration:e.integration, error_message:e.error_message });
+        if (n.status !== 'error') return;
+        if (!bysite[e.site_id]) bysite[e.site_id]={site:siteMap[e.site_id],errors:[]};
+        bysite[e.site_id].errors.push(e);
+    });
+    const data = Object.values(bysite);
+
+    // SILENZIO = ERRORE: sito online ma fermo da > 24h pur avendo storico richieste (la richiesta arriva e non entra niente).
+    const lastEv = {};
+    (ev30||[]).forEach(e => { if (!lastEv[e.site_id]) lastEv[e.site_id] = e.created_at; });
+    const silentSites = (allSites||[]).filter(s => {
+        const online = s.last_heartbeat && (Date.now() - new Date(s.last_heartbeat).getTime()) < 25 * 3600000;
+        const last = lastEv[s.site_id];
+        return online && last && (Date.now() - new Date(last).getTime()) > 86400000;
+    });
+
+    if (data.length === 0 && silentSites.length === 0) {
+        el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>` + emptyHtml('Nessun errore nelle ultime 24h','Tutto funziona correttamente.');
+        document.getElementById('back-err').addEventListener('click', loadPlugins); return;
+    }
+    const silentHtml = silentSites.map(s => {
+        const hrsAgo = Math.floor((Date.now() - new Date(lastEv[s.site_id]).getTime()) / 3600000);
+        const ago = hrsAgo >= 48 ? Math.floor(hrsAgo / 24) + ' giorni' : hrsAgo + 'h';
+        return `<div class="card" style="margin-bottom:16px;border-left:4px solid #d82d6b">
+            <div class="card-header">
+                <div><span class="card-title">${esc(s.site_name||s.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s.site_url||'')}</span></div>
+                <button class="btn-detail" data-site="${esc(s.site_id)}">Vedi dettaglio →</button>
+            </div>
+            <div style="padding:4px 0"><div class="log-item"><span class="log-level error">fermo</span><span class="log-message"><strong>Non riceve richieste</strong> — il sito è online ma non entra nessuna richiesta da ${ago} (possibile background/integrazioni fermi, come Golf)</span><span class="log-time">silenzio</span></div></div>
+        </div>`;
+    }).join('');
+    el.innerHTML = `<button class="btn-back" id="back-err">← Torna alla home</button>
+    ${silentHtml}
+    ${data.map(item => {
+        const s = item.site; const eg = {};
+        (item.errors||[]).forEach(e => { const k = e.integration+'\x00'+(e.error_message||''); eg[k]=(eg[k]||0)+1; });
+        return `<div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div><span class="card-title">${esc(s?.site_name||s?.site_id)}</span><span style="font-size:12px;color:var(--grey);margin-left:10px">${esc(s?.site_url||'')}</span></div>
+                <button class="btn-detail" data-site="${esc(s?.site_id)}">Vedi dettaglio →</button>
+            </div>
+            <div style="padding:4px 0">${Object.entries(eg).map(([k,cnt]) => { const sep=k.indexOf('\x00'); const integ=k.substring(0,sep); const msg=k.substring(sep+1); const il={supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ]||integ; return `<div class="log-item"><span class="log-level error">errore</span><span class="log-message"><strong>${esc(il)}</strong> — ${esc(msg||'Errore sconosciuto')}</span><span class="log-time">${cnt}× nelle ultime 24h</span></div>`; }).join('')}</div>
+        </div>`;
+    }).join('')}`;
+    document.getElementById('back-err').addEventListener('click', loadPlugins);
+    el.querySelectorAll('.btn-detail').forEach(btn => btn.addEventListener('click', () => loadSiteDetail(btn.dataset.site)));
+}
+
+// ─── VIEW: SITI ───────────────────────────────────────────────────────────────
+async function loadSites(pluginName, silent = false) {
+    currentPlugin = pluginName; currentView = 'sites'; showView('sites');
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),active:true}]);
+    const el = document.getElementById('sites-container');
+    if (!silent) el.innerHTML = loadingHtml();
+
+    const yesterday = new Date(Date.now() - 86400000);
+    // Ordinati per DATA DI INSTALLAZIONE (first_seen), non per ultima attività: la lista resta stabile
+    // e non si riordina in base all'ultimo hotel che ha ricevuto una richiesta.
+    const { data: sites } = await _SBq.from('mon_sites').select('*').eq('plugin_name', pluginName).order('first_seen',{ascending:true,nullsFirst:false});
+    updateLatestVersions(sites);
+    const siteIds = (sites||[]).map(s => s.site_id);
+
+    let lastEvents = [], recentStats = [];
+    if (siteIds.length > 0) {
+        const [le, rs] = await Promise.all([
+            _SBq.from('mon_events').select('site_id, created_at').in('site_id', siteIds).eq('event_type','form_submitted').order('created_at',{ascending:false}),
+            _SBq.from('mon_integration_stats').select('site_id, integration, status, error_message, created_at').in('site_id', siteIds).gte('created_at', yesterday.toISOString()).order('created_at',{ascending:false})
+        ]);
+        lastEvents = le.data || [];
+        recentStats = rs.data || [];
+    }
+
+    // Totale richieste (form_submitted) per sito — conteggio esatto (head:true = solo il numero, non scarica le righe).
+    const totalReqMap = {};
+    if (siteIds.length > 0) {
+        const counts = await Promise.all(siteIds.map(id =>
+            _SBq.from('mon_events').select('*', { count: 'exact', head: true }).eq('site_id', id).eq('event_type', 'form_submitted')
+        ));
+        siteIds.forEach((id, i) => { totalReqMap[id] = (counts[i] && counts[i].count) || 0; });
+    }
+
+    const lastReqMap = {};
+    lastEvents.forEach(e => { if (!lastReqMap[e.site_id]) lastReqMap[e.site_id] = e.created_at; });
+    const integMap = {};
+    const errorSetMap = {};
+    recentStats.forEach(raw => {
+        const s = normalizeRecord(raw);
+        if (!integMap[s.site_id]) integMap[s.site_id]={};
+        if (!integMap[s.site_id][s.integration] && isValidRecord(s, s.integration)) integMap[s.site_id][s.integration]=s.status;
+        if (s.status === 'error') {
+            if (!errorSetMap[s.site_id]) errorSetMap[s.site_id] = new Set();
+            errorSetMap[s.site_id].add(s.integration);
+        }
+    });
+
+    const now = new Date();
+    const integLabelsShort = {supabase:'Database', crm:'CRM', amelia:'Amelia'};
+    const enriched = (sites||[]).map(s => {
+        const hrs = s.last_heartbeat ? (now - new Date(s.last_heartbeat))/3600000 : 9999;
+        const heartbeatStatus = hrs<25?'green':'grey';
+        const integ = integMap[s.site_id] || {};
+        // Usa lo stato più recente per ogni integrazione (recupero immediato quando errore risolto)
+        const integErrors = ['supabase','crm','amelia'].filter(k => integ[k] === 'error');
+        let overallStatus, overallTooltip;
+        if (heartbeatStatus !== 'green') {
+            overallStatus = 'grey';
+            overallTooltip = hrs > 168 ? 'Plugin probabilmente disinstallato' : `Nessun segnale da ${Math.round(hrs)}h`;
+        } else if (integErrors.length > 0) {
+            overallStatus = 'red';
+            overallTooltip = 'Errore: ' + integErrors.map(k => integLabelsShort[k]).join(', ');
+        } else {
+            overallStatus = 'green';
+            overallTooltip = 'Tutto ok';
+        }
+        return { ...s, status: heartbeatStatus, overallStatus, overallTooltip, hours_since_heartbeat: Math.round(hrs), last_request: lastReqMap[s.site_id]||null, total_requests: totalReqMap[s.site_id]||0, last_integ: integ };
+    });
+
+    // Ordinamento colonne (Ultima richiesta / Tot. richieste / Installato il). 1° click = decrescente
+    // (più richieste, data/richiesta più recente), 2° click = crescente. Stato persistito tra i refresh.
+    const _ss = (window.__sitesSort = window.__sitesSort || { key: null, dir: -1 });
+    const _sortVal = (s, k) => k === 'total_requests' ? (s.total_requests || 0) : (s[k] ? new Date(s[k]).getTime() : 0);
+    const applySitesSort = () => { if (_ss.key) enriched.sort((a, b) => (_sortVal(a, _ss.key) - _sortVal(b, _ss.key)) * _ss.dir); };
+    const _arrow = k => _ss.key === k ? (_ss.dir < 0 ? ' ▼' : ' ▲') : '';
+    const _th = (label, k) => `<th data-sort="${k}" data-label="${label}" style="white-space:nowrap;cursor:pointer;user-select:none" title="Ordina">${label}${_arrow(k)}</th>`;
+    applySitesSort();
+    const active = enriched.filter(s=>s.status==='green').length;
+    const inactive = enriched.filter(s=>s.status!=='green').length;
+    const filterRows = f => el.querySelectorAll('tr[data-site-id]').forEach(r => {
+        r.style.display = f===null||(f==='green'&&r.dataset.status==='green')||(f==='inactive'&&r.dataset.status!=='green') ? '' : 'none';
+    });
+    const li = latestInfo(pluginName);
+    setHero(displayName(pluginName), displayName(pluginName), [
+        { num: enriched.length, label: 'Siti installati', onclick: () => filterRows(null) },
+        { num: active,          label: 'Plugin attivi',   onclick: () => filterRows('green') },
+        { num: inactive,        label: 'Senza segnale',   onclick: () => filterRows('inactive') },
+        { num: '↑', display: li ? `${li.version}${li.date?`<div style="font-size:.7rem;font-weight:400;color:#aaa;margin-top:2px">${li.date}</div>`:''}` : '—', label: li&&li.download_url?`Ultima versione · <a href="${li.download_url}" download style="color:var(--magenta);font-weight:700;text-decoration:none;white-space:nowrap">↓ Scarica zip</a>`:'Ultima versione' },
+    ]);
+
+    if (enriched.length === 0) { el.innerHTML = emptyHtml('Nessuna installazione','Le installazioni appariranno quando i siti invieranno il primo segnale.'); return; }
+
+    el.innerHTML = `
+        <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
+        <div class="card">
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return !recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Tipo CRM</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
+            <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
+        </div>
+        `;
+
+
+    document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
+
+    const btnRetryAll = document.getElementById('btn-retry-supabase-all');
+    if (btnRetryAll) {
+        btnRetryAll.addEventListener('click', async () => {
+            const targets = enriched.filter(s => s.site_url && s.api_key);
+            if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
+            const names = targets.map(s => s.site_name || s.site_url || s.site_id);
+            if (!(await if2Confirm(`Rinviare a Supabase le richieste fallite degli ultimi 7 giorni su ${targets.length} siti?`, 'Rinvia DB falliti', names))) return;
+            btnRetryAll.textContent = 'In corso...'; btnRetryAll.disabled = true;
+            let totalOk = 0, totalFail = 0, errors = [];
+            await Promise.all(targets.map(async s => {
+                try {
+                    const fd = new FormData();
+                    fd.append('api_key', s.api_key);
+                    fd.append('days', '7');
+                    fd.append('force', '1');
+                    const resp = await fetch(s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/retry-supabase', { method: 'POST', body: fd });
+                    const json = await resp.json();
+                    totalOk   += json.ok   || 0;
+                    totalFail += json.fail || 0;
+                    if (json.error) errors.push((s.site_name || s.site_url) + ': ' + json.error);
+                } catch(e) { errors.push((s.site_name || s.site_url) + ': errore connessione'); }
+            }));
+            btnRetryAll.textContent = '↺ Rinvia DB falliti'; btnRetryAll.disabled = false;
+            const ts = new Date().toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+            try { localStorage.setItem('if2_retry_result', JSON.stringify({ok:totalOk,fail:totalFail,ts})); } catch(e){}
+            const span = document.getElementById('retry-last-result');
+            if (span) span.textContent = `Ultimo rinvio: ✓ ${totalOk} ✗ ${totalFail} — ${ts}`;
+            const msg = `✓ OK: ${totalOk}   ✗ Fail: ${totalFail}` + (errors.length ? '\n\n' + errors.join('\n') : '');
+            if2Modal(msg);
+        });
+    }
+
+    const btnUpdateAll = document.getElementById('btn-update-all');
+    if (btnUpdateAll) {
+        btnUpdateAll.addEventListener('click', async () => {
+            const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
+            if (!outdatedBtns.length) { if2Modal('✓ Tutti i siti sono già aggiornati.'); return; }
+            const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
+            if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
+            btnUpdateAll.textContent = 'Download ZIP...';
+            btnUpdateAll.disabled = true;
+
+            // 1. Scarica lo ZIP una volta nel browser (CDN poi raw come fallback).
+            //    Salviamo come ArrayBuffer per poter creare un Blob fresco per ogni upload
+            //    ed evitare conflitti quando più fetch leggono lo stesso Blob in parallelo.
+            let zipArray = null;
+            for (const url of [outdatedBtns[0].dataset.dl, outdatedBtns[0].dataset.rawdl].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipArray = await r.arrayBuffer(); break; } } catch {}
+            }
+
+            // 2. Aggiorna i siti max 5 alla volta (evita conflitti con 68 upload paralleli).
+            let done = 0, failed = 0;
+            const total = outdatedBtns.length;
+            const setProgress = () => { btnUpdateAll.textContent = `Aggiornamento ${done + failed}/${total}...`; };
+            setProgress();
+
+            const CONCURRENCY = 1; // sequenziale: identico a premere "Aggiorna" uno alla volta
+            const needsUrlBtns = [];
+            let idx = 0;
+            const workers = Array.from({ length: Math.min(CONCURRENCY, outdatedBtns.length) }, async () => {
+                while (idx < outdatedBtns.length) {
+                    const btn = outdatedBtns[idx++];
+                    const zipBlob = zipArray ? new Blob([zipArray]) : null;
+                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true);
+                    if (result === 'needs_url') needsUrlBtns.push(btn);
+                    else { if (result === 'error') failed++; else done++; setProgress(); }
+                }
+            });
+            await Promise.all(workers);
+
+            // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta, 3s di pausa.
+            for (const btn of needsUrlBtns) {
+                const r = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
+                if (r === 'error') failed++; else done++;
+                setProgress();
+                if (done + failed < total) await new Promise(r => setTimeout(r, 3000));
+            }
+
+            btnUpdateAll.textContent = failed ? `✓ ${done} aggiornati · ${failed} non raggiungibili` : `✓ ${done} aggiornati!`;
+            btnUpdateAll.disabled = false;
+            setTimeout(() => loadSites(currentPlugin), 3000);
+        });
+    }
+
+    const attachRowHandlers = () => {
+    el.querySelectorAll('tr[data-site-id]').forEach(row => { row.addEventListener('click', e => { if (e.target.closest('.btn-ping') || e.target.closest('.btn-update-row')) return; loadSiteDetail(row.dataset.siteId); }); });
+    el.querySelectorAll('.btn-update-row').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            if (btn.dataset.outdated !== '1') {
+                if2Modal('✓ Ultima versione già installata.');
+                return;
+            }
+            const siteLabel = btn.dataset.name || btn.dataset.url || btn.dataset.site;
+            if (!(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+            btn.textContent = 'Download ZIP...'; btn.disabled = true;
+            let zipBlob = null;
+            for (const url of [btn.dataset.dl, btn.dataset.rawdl].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
+            }
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, true, zipBlob);
+        });
+    });
+    el.querySelectorAll('.btn-ping').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            const name   = btn.dataset.name;
+            const siteUrl = btn.dataset.url;
+            const apiKey  = btn.dataset.apikey;
+            btn.textContent = '...'; btn.disabled = true;
+            try { const d = await pingLive(siteUrl, apiKey); showPingResult(name, d); }
+            catch { showPingResult(name, null); }
+            finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
+        });
+    });
+    };
+    attachRowHandlers();
+    // click sulle intestazioni ordinabili: ri-ordina e ridisegna solo il corpo tabella
+    el.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+        const k = th.dataset.sort;
+        if (_ss.key === k) _ss.dir = -_ss.dir; else { _ss.key = k; _ss.dir = -1; }
+        applySitesSort();
+        el.querySelector('.sites-table tbody').innerHTML = enriched.map(siteRowHtml).join('');
+        el.querySelectorAll('th[data-sort]').forEach(h => { h.innerHTML = h.dataset.label + _arrow(h.dataset.sort); });
+        attachRowHandlers();
+    }));
+
+}
+
+function siteRowHtml(s) {
+    const integ = s.last_integ || {};
+    const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
+    const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
+    return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
+        <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
+        <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${s.last_request?timeAgo(s.last_request):'—'}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap;font-weight:700;text-align:center">${s.total_requests||0}</td>
+        <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
+        <td style="font-size:12px;white-space:nowrap">${(()=>{const t=s.crm_type||'';if(!t)return '<span style="color:var(--grey)">—</span>';const map={hoteldoor:'HotelDoor',mrpreno:'MrPreno',combo:'Combo',override:'Override',hotel_id:'Hotel ID'};return t.split(',').map(k=>map[k]||k).join(', ');})()}</td>
+        <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');if(s.feature_date_chiuse===false||s.feature_date_chiuse===0)off.push('Date chiuse');if(s.feature_minimum_stay===false||s.feature_minimum_stay===0)off.push('Min stay');if(s.feature_dot_db===false||s.feature_dot_db===0||s.feature_dot_crm===false||s.feature_dot_crm===0||s.feature_dot_amelia===false||s.feature_dot_amelia===0)off.push('Semafori');const TOT=6;if(!off.length)return '<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';if(off.length===TOT)return '<span style="color:var(--magenta);font-weight:700">Tutte OFF</span>';return '<span style="color:var(--magenta);font-weight:700">OFF: '+off.join(', ')+'</span>';})()}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
+        <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
+        <td style="white-space:nowrap"><div class="row-actions">
+            <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=!recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+        </div></td>
+    </tr>`;
+}
+
+// Applica un'impostazione DAVVERO sul plugin del sito, con retry e verifica.
+// Usa body form-urlencoded = richiesta "semplice" → nessun preflight CORS dal browser.
+// Ritorna true solo se il plugin conferma {success:true}.
+async function setPluginConfig(url, apiKey, key, value) {
+    if (!url || !apiKey) return false;
+    const endpoint = url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config';
+    const body = new URLSearchParams({ api_key: apiKey, key: key, value: String(value) });
+    for (let i = 0; i < 2; i++) {
+        try {
+            const resp = await fetch(endpoint, { method: 'POST', body });
+            const json = await resp.json().catch(() => ({}));
+            if (resp.ok && json && json.success) return true;
+        } catch (e) {}
+        if (i === 0) await new Promise(r => setTimeout(r, 700)); // breve attesa prima del retry
+    }
+    return false;
+}
+
+// ─── VIEW: DETTAGLIO SITO ─────────────────────────────────────────────────────
+async function loadSiteDetail(siteId, silent = false) {
+    currentSite = siteId; currentView = 'site'; showView('site');
+    const el = document.getElementById('site-container');
+    if (!silent) el.innerHTML = loadingHtml();
+
+    const now = new Date();
+    const yesterday = new Date(now - 86400000);
+    const weekAgo   = new Date(now - 7  * 86400000);
+    const thirtyAgo = new Date(now - 30 * 86400000);
+
+    const { data: site, error: se } = await _SBq.from('mon_sites').select('*').eq('site_id', siteId).single();
+    if (se) { el.innerHTML = errorHtml(); return; }
+
+    const ninetyAgo = new Date(now - 90 * 86400000);
+    const [{ data: intStats }, { data: intTrends }, { data: logs }, { data: events }, { data: allEvents }, { count: totalSubs }, { data: formSnap }, { data: richEvents }] = await Promise.all([
+        _SBq.from('mon_integration_stats').select('*').eq('site_id',siteId).gte('created_at', yesterday.toISOString()),
+        _SBq.from('mon_integration_stats').select('integration, status, created_at').eq('site_id',siteId).gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
+        _SBq.from('mon_logs').select('*').eq('site_id',siteId).order('created_at',{ascending:false}).limit(20),
+        _SBq.from('mon_events').select('event_type, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', weekAgo.toISOString()),
+        _SBq.from('mon_events').select('created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', thirtyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000),
+        _SBq.from('mon_events').select('*',{count:'exact',head:true}).eq('site_id',siteId).eq('event_type','form_submitted'),
+        _SBq.from('mon_events').select('payload').eq('site_id',siteId).eq('event_type','forms_snapshot').order('created_at',{ascending:false}).limit(1),
+        _SBq.from('mon_events').select('payload, created_at').eq('site_id',siteId).eq('event_type','form_submitted').gte('created_at', ninetyAgo.toISOString()).order('created_at',{ascending:false}).limit(5000)
+    ]);
+
+    const dailyCounts = {};
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); dailyCounts[d.toISOString().slice(0,10)]=0; }
+    (allEvents||[]).forEach(e => { const day=e.created_at.slice(0,10); if(dailyCounts[day]!==undefined) dailyCounts[day]++; });
+
+    const trendDays = {};
+    for (let i=29;i>=0;i--) { const d=new Date(now-i*86400000); trendDays[d.toISOString().slice(0,10)]={supabase:{ok:0,tot:0,err:0},crm:{ok:0,tot:0,err:0},amelia:{ok:0,tot:0,err:0}}; }
+
+    (intTrends||[]).forEach(raw => {
+        let s = normalizeRecord(raw);
+        // CRM error senza messaggio = CRM esterno (hotel_id), non è un vero errore
+        if (s.integration === 'crm' && s.status === 'error' && !s.error_message) s = {...s, status:'skipped'};
+        const day=s.created_at.slice(0,10);
+        if(trendDays[day]&&trendDays[day][s.integration]){
+            trendDays[day][s.integration].tot++;
+            // Amelia: solo 'ok' conta (info=duplicato, skipped=altro 4xx non entrano nel conteggio)
+            // Supabase/CRM: ok + info + skipped tutti contano
+            const isOk = s.integration==='amelia'
+                ? s.status==='ok'
+                : (s.status==='ok'||s.status==='info'||s.status==='skipped');
+            if(isOk) trendDays[day][s.integration].ok++;
+            if(s.status==='error') trendDays[day][s.integration].err++;
+        }
+    });
+    const integrationTrends = ['supabase','crm','amelia'].map(integ => ({ integration:integ, data:Object.entries(trendDays).map(([date,d])=>({date,rate:d[integ].tot>0?Math.round(d[integ].ok/d[integ].tot*100):null,errRate:d[integ].tot>0?d[integ].err/d[integ].tot:null})) }));
+
+    const integrationStatus = {};
+    ['supabase','crm','amelia'].forEach(integ => {
+        let stats = (intStats||[]).filter(s=>s.integration===integ)
+            .filter(s => isValidRecord(s, integ))
+            .map(normalizeRecord)
+            .map(s => (integ==='crm' && s.status==='error' && !s.error_message) ? {...s,status:'skipped'} : s);
+        const configured = !!site['has_' + integ];
+        if (!stats.length) {
+            integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured};
+            return;
+        }
+        const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
+        const rate = ok/stats.length;
+        // Dot basato sul tasso di errori veri per tutti e 3: skipped/info non sono errori
+        const errCount = stats.filter(s => s.status === 'error').length;
+        const errRate  = errCount / stats.length;
+        const status   = errRate === 0 ? 'green' : errRate < 0.5 ? 'yellow' : 'red';
+        integrationStatus[integ]={status,ok,total:stats.length,rate:Math.round(rate*100),last_error:stats.find(s=>s.status==='error')?.error_message||null,configured};
+    });
+
+    const hrs = site.last_heartbeat ? (now - new Date(site.last_heartbeat))/3600000 : 9999;
+    const heartbeatStatus = hrs<25?'green':hrs<48?'yellow':'red';
+    const allStatuses = [heartbeatStatus,...Object.values(integrationStatus).map(i=>i.status)].filter(s=>s!=='grey');
+    const overallStatus = allStatuses.includes('red')?'red':allStatuses.includes('yellow')?'yellow':'green';
+
+    const li            = latestInfo(site.plugin_name);
+    const latestVersion = li ? li.version : null;
+    const latestDownloadUrl = li ? li.download_url : null;
+    const versionOk = !latestVersion || !semverGt(latestVersion, site.plugin_version);
+
+    const allMessages = (logs||[]).map(l=>l.message||'');
+    const suggestions = [];
+    if (allMessages.some(m=>m.includes('BAD_CONTACT_MSISDN'))) suggestions.push({level:'error',title:'Numero di telefono non valido (Amelia)',action:'Amelia rifiuta il numero perché non è nel formato internazionale. Usa il campo telefono con validazione attiva.'});
+    if (allMessages.some(m=>m.includes('BAD_CONTACT_EMAIL'))) suggestions.push({level:'error',title:'Email non valida (Amelia)',action:'Amelia ha rifiutato l\'email del cliente. Verifica che il campo email nel form sia obbligatorio e di tipo CAMPO EMAIL (non testo).'});
+    if (allMessages.some(m=>m.includes('PGRST204'))) suggestions.push({level:'error',title:'Colonna mancante in Supabase',action:'Il form cerca una colonna che non esiste. Verifica i nomi delle colonne nelle impostazioni del form → Supabase.'});
+    if (!versionOk) suggestions.push({level:'warning',title:`Versione ${site.plugin_version} — disponibile la ${latestVersion}`,action:site.api_key&&latestDownloadUrl?`Usa il pulsante "Aggiorna ora" in Informazioni sito.`:`Aggiorna il plugin da WordPress: Plugin → in3pida Form → Aggiorna.`});
+
+    const siteName   = site.site_name || site.site_url || siteId;
+    const pluginName = site.plugin_name;
+    setBreadcrumb([{label:'Home',onclick:loadPlugins},{label:displayName(pluginName),onclick:()=>loadSites(pluginName)},{label:siteName,active:true}]);
+    setHero(displayName(pluginName), siteName, [{num:totalSubs||0,label:'Richieste totali'},{num:events?.length||0,label:'Ultimi 7 giorni'}]);
+
+    const integLabels = {supabase:'Database',crm:'CRM',amelia:'Amelia'};
+
+    // ─── Dati "Form e richieste" (card sopra il grafico) ───
+    // Canale ricavato dal nome del form (i nomi seguono lo schema "… - Ads/Fb/NL/DEM - …")
+    const channelOf = name => {
+        const n = ' ' + String(name||'').toLowerCase() + ' ';
+        if (/\bads\b|pmax|ricerca|\bsem\b|\bsea\b|adwords/.test(n)) return 'Google Ads';
+        if (/\bfb\b|facebook|meta|instagram|\big\b/.test(n))        return 'Facebook/Instagram';
+        if (/\bnl\b|newsletter/.test(n))                            return 'Newsletter';
+        if (/\bdem\b/.test(n))                                      return 'Email (DEM)';
+        return 'Altro / Sito';
+    };
+    const reqEvents = (richEvents||[]).map(e => {
+        const p = e.payload || {};
+        return {
+            form_id:   p.form_id!=null ? String(p.form_id) : '',
+            form_name: p.form_name || '',
+            ts:        new Date(e.created_at).getTime()
+        };
+    });
+    const formsInfo = {};
+    const snapForms = (formSnap && formSnap[0] && formSnap[0].payload && formSnap[0].payload.forms) || [];
+    snapForms.forEach(f => { formsInfo[String(f.id)] = { name: f.name || ('Form '+f.id), created: f.created_at }; });
+    reqEvents.forEach(r => { if (r.form_id && !formsInfo[r.form_id]) formsInfo[r.form_id] = { name: r.form_name || ('Form '+r.form_id), created: null }; });
+    Object.keys(formsInfo).forEach(id => { formsInfo[id].channel = channelOf(formsInfo[id].name); });
+    const formIdsSorted = Object.keys(formsInfo).sort((a,b)=>(formsInfo[b].created||'').localeCompare(formsInfo[a].created||''));
+    const channelsSet = Array.from(new Set(formIdsSorted.map(id=>formsInfo[id].channel))).sort();
+
+    const formOpts = ['<option value="">Tutti i form</option>'].concat(formIdsSorted.map(id=>`<option value="${esc(id)}">${esc(formsInfo[id].name)}</option>`)).join('');
+    const chanOpts = ['<option value="__all__">Tutti i canali</option>'].concat(channelsSet.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`)).join('');
+    const formsReqCard = `
+        <div class="card" id="card-forms-req">
+            <div class="card-header"><span class="card-title">Form e richieste</span><span style="font-size:12px;color:var(--grey)">${formIdsSorted.length} form • ultimi 90 giorni</span></div>
+            <div style="padding:10px 26px 22px">
+                <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px">
+                    <div class="chart-toggle" id="req-period">
+                        <button class="chart-toggle-btn" data-p="today">Oggi</button>
+                        <button class="chart-toggle-btn" data-p="yest">Ieri</button>
+                        <button class="chart-toggle-btn active" data-p="7">7 giorni</button>
+                        <button class="chart-toggle-btn" data-p="30">30 giorni</button>
+                        <button class="chart-toggle-btn" data-p="90">90 giorni</button>
+                    </div>
+                    <select id="req-form" class="req-select">${formOpts}</select>
+                    <select id="req-channel" class="req-select">${chanOpts}</select>
+                </div>
+                <div id="req-count" class="req-count"></div>
+                <div id="req-forms-table" style="margin-top:18px"></div>
+            </div>
+        </div>`;
+
+    // Ricalcolo lato client dei filtri (periodo/form/canale)
+    const reqThreshold = p => {
+        if (p==='today') { const d=new Date(); d.setHours(0,0,0,0); return {from:d.getTime(), to:Infinity}; }
+        if (p==='yest')  { const end=new Date(); end.setHours(0,0,0,0); return {from:end.getTime()-86400000, to:end.getTime()}; }
+        const days = p==='7'?7:p==='30'?30:90;
+        return {from: now.getTime()-days*86400000, to:Infinity};
+    };
+    const renderReq = () => {
+        const p     = document.querySelector('#req-period .chart-toggle-btn.active')?.dataset.p || '7';
+        const fForm = document.getElementById('req-form').value;
+        const fChan = document.getElementById('req-channel').value;
+        const chMatch = r => fChan==='__all__' || (formsInfo[r.form_id] && formsInfo[r.form_id].channel===fChan);
+        const {from,to} = reqThreshold(p);
+        const inPeriod = reqEvents.filter(r => r.ts>=from && r.ts<to);
+        const filtered = inPeriod.filter(r => (fForm===''||r.form_id===fForm) && chMatch(r));
+        document.getElementById('req-count').innerHTML = `<span class="req-big">${filtered.length}</span><span class="req-big-label">richieste nel periodo selezionato</span>`;
+        const byForm = {};
+        inPeriod.filter(chMatch).forEach(r=>{ byForm[r.form_id]=(byForm[r.form_id]||0)+1; });
+        const visibleIds = formIdsSorted.filter(id => fChan==='__all__' || formsInfo[id].channel===fChan);
+        const rows = visibleIds.map(id=>({name:formsInfo[id].name, created:formsInfo[id].created, n:byForm[id]||0})).sort((a,b)=>b.n-a.n);
+        document.getElementById('req-forms-table').innerHTML = rows.length
+            ? `<table class="req-table"><thead><tr><th>Form</th><th>Creato il</th><th style="text-align:right">Richieste</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.created?fmtDate(r.created):'—'}</td><td style="text-align:right;font-weight:700">${r.n}</td></tr>`).join('')}</tbody></table>`
+            : `<div style="padding:14px 0;color:var(--grey);font-size:.85rem">Nessun form ancora registrato dal plugin. Comparirà dopo il primo aggiornamento/invio.</div>`;
+    };
+
+    el.innerHTML = `
+        <button class="btn-back" id="back-to-sites">← Torna ai siti — ${esc(displayName(pluginName))}</button>
+        ${suggestions.length>0?`<div class="card">${suggestions.map(s=>`<div class="suggestion-item ${esc(s.level)}"><div class="suggestion-title">${esc(s.title)}</div><div class="suggestion-action">${esc(s.action)}</div></div>`).join('')}</div>`:''}
+        <div class="detail-grid">
+            <div class="card">
+                <div class="card-header"><span class="card-title">Stato semafori</span></div>
+                <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
+                <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error:''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
+            </div>
+            <div class="card">
+                <div class="card-header"><span class="card-title">Informazioni sito</span></div>
+                ${latestVersion&&!versionOk?`<div style="padding:12px 26px 0"><div class="version-row"><span>Versione installata: <strong>${esc(site.plugin_version)}</strong></span><span class="version-badge warn">Disponibile: v${esc(latestVersion)}</span>${site.api_key&&latestDownloadUrl?`<button class="btn-update" id="btn-do-update">Aggiorna ora</button>`:''}</div></div>`:''}
+                <div class="info-grid">
+                    ${infoRow('Sito',site.site_name)}${infoRow('URL',site.site_url)}${infoRow('Plugin ver.',site.plugin_version)}${infoRow('WordPress',site.wp_version)}${infoRow('PHP',site.php_version)}${infoRow('Tema attivo',site.theme_active)}${infoRow('Installato il',fmtDate(site.first_seen))}${infoRow('Site ID',site.site_id,true)}
+                </div>
+            </div>
+        </div>
+        ${formsReqCard}
+        <div class="card">
+            <div class="card-header"><span class="card-title">Richieste ricevute giorno per giorno</span>
+            <div class="chart-toggle" id="sub-toggle"><button class="chart-toggle-btn active" data-range="7">7 giorni</button><button class="chart-toggle-btn" data-range="30">30 giorni</button></div></div>
+            <div style="padding:20px 26px 24px"><canvas id="chart-submissions" height="80"></canvas></div>
+        </div>
+        ${(()=>{
+            const rows = ['supabase','crm','amelia'].map(integ => { const t=integrationTrends.find(x=>x.integration===integ); if(!t)return null; return {integ,label:{supabase:'Salvataggio DB',crm:'CRM',amelia:'Amelia'}[integ],data:t.data.slice(-14)}; }).filter(Boolean);
+            if (!rows.some(r=>r.data.some(x=>x.rate!==null))) return '';
+            const dls = rows[0].data.map(r=>new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+            return `<div class="card"><div class="card-header"><span class="card-title">Funzionamento integrazioni — ultimi 14 giorni</span></div><div style="padding:16px 26px 20px;overflow-x:auto"><table class="heatmap-table"><thead><tr><th></th>${dls.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><td class="heatmap-row-label">${row.label}</td>${row.data.map(r=>{if(r.rate===null)return`<td><span class="heatmap-cell empty">—</span></td>`;const cls=r.errRate===0?'ok':r.errRate<0.5?'warn':'err';return`<td><span class="heatmap-cell ${cls}">${r.rate}%</span></td>`;}).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+        })()}
+        <div class="stat-cards-row">
+            <div class="stat-big-card magenta"><div class="stat-big-num">${totalSubs||0}</div><div class="stat-big-label">Richieste ricevute in totale</div></div>
+            <div class="stat-big-card cyan"><div class="stat-big-num">${events?.length||0}</div><div class="stat-big-label">Richieste negli ultimi 7 giorni</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.supabase)}"><div class="stat-big-num">${rateLabel(integrationStatus.supabase)}</div><div class="stat-big-label">Salvataggio DB (ultime 24h)</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.crm)}"><div class="stat-big-num">${rateLabel(integrationStatus.crm)}</div><div class="stat-big-label">Invio CRM (ultime 24h)</div></div>
+            <div class="stat-big-card ${statCardClass(integrationStatus.amelia)}"><div class="stat-big-num">${rateLabel(integrationStatus.amelia)}</div><div class="stat-big-label">Amelia (ultime 24h)</div></div>
+        </div>
+        <div class="card" id="card-features">
+            <div class="card-header"><span class="card-title">Funzionalità visibili sul plugin</span></div>
+            <div style="padding:4px 26px 16px">
+                ${[
+                    {key:'if2_feature_stats',        label:'Statistiche',            val:site.feature_stats},
+                    {key:'if2_feature_crm_tab',      label:'Integrazione CRM',       val:site.feature_crm_tab},
+                    {key:'if2_feature_settings_tab', label:'Impostazioni in3pida',   val:site.feature_settings_tab},
+                    {key:'if2_feature_date_chiuse',  label:'Date chiuse',            val:site.feature_date_chiuse},
+                    {key:'if2_feature_minimum_stay', label:'Minimum stay',           val:site.feature_minimum_stay},
+                    {key:'__semafori__',             label:'Semafori DB / CRM / Amelia', val:site.feature_dot_db!==false&&site.feature_dot_db!==0&&site.feature_dot_crm!==false&&site.feature_dot_crm!==0&&site.feature_dot_amelia!==false&&site.feature_dot_amelia!==0},
+                ].map(f=>{const on=f.val!==false&&f.val!==0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f4f4f8"><span style="font-size:.85rem;font-weight:600;color:#333">${esc(f.label)}</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:.78rem;font-weight:700;color:${on?'var(--cyan)':'var(--magenta)'}">${on?'Attiva':'Disattiva'}</span><button class="btn-feature-toggle" data-key="${esc(f.key)}" data-value="${on?0:1}" data-site="${esc(siteId)}" data-url="${esc(site.site_url||'')}" data-apikey="${esc(site.api_key||'')}" style="width:44px;height:26px;border-radius:13px;background:${on?'var(--cyan)':'var(--magenta)'};border:none;cursor:pointer;position:relative;padding:0;flex-shrink:0"><span style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:${on?'21px':'3px'};display:block;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span></button></div></div>`;}).join('')}
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header"><span class="card-title">Log recenti</span><span style="font-size:12px;color:var(--grey)">Ultimi 20</span></div>
+            ${logs?.length>0?'<div>'+logs.map(logRowHtml).join('')+'</div>':emptyHtml('Nessun log','Nessun errore registrato.')}
+        </div>`;
+
+    document.getElementById('back-to-sites').addEventListener('click', () => loadSites(pluginName));
+
+    const btnDoUpdate = document.getElementById('btn-do-update');
+    if (btnDoUpdate) {
+        btnDoUpdate.addEventListener('click', async () => {
+            const siteLabel2 = site.site_name || site.site_url || siteId;
+            if (!(await if2Confirm('Aggiornare il plugin su «' + siteLabel2 + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+            btnDoUpdate.textContent = 'Download ZIP...'; btnDoUpdate.disabled = true;
+            let zipBlob = null;
+            for (const url of [li ? li.download_url : null, li ? li.raw_url : null].filter(Boolean)) {
+                try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
+            }
+            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, true, zipBlob);
+        });
+    }
+
+    el.querySelectorAll('.btn-enable-crm').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.textContent = 'Attivazione...'; btn.disabled = true;
+            const ok = await setPluginConfig(btn.dataset.url, btn.dataset.apikey, 'if2_has_crm_override', 1);
+            if (ok) {
+                btn.textContent = 'CRM attivato!';
+                btn.style.background = 'var(--cyan)';
+                setTimeout(() => loadSiteDetail(btn.dataset.site), 3000);
+            } else {
+                btn.textContent = 'Errore: sito non raggiungibile'; btn.disabled = false;
+            }
+        });
+    });
+
+    el.querySelectorAll('.btn-feature-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const key    = btn.dataset.key;
+            const value  = parseInt(btn.dataset.value); // valore da impostare (0 o 1)
+            const sid    = btn.dataset.site;
+            const url    = btn.dataset.url;
+            const apiKey = btn.dataset.apikey;
+            const nowOn  = value === 1; // nuovo stato dopo il click
+
+            const knob       = btn.querySelector('span');
+            const stateLabel = btn.parentElement.querySelector('span:first-child');
+            const setVisual = (isOn) => {
+                btn.style.background = isOn ? 'var(--cyan)' : 'var(--magenta)';
+                if (knob) knob.style.left = isOn ? '21px' : '3px';
+                if (stateLabel) { stateLabel.textContent = isOn ? 'Attiva' : 'Disattiva'; stateLabel.style.color = isOn ? 'var(--cyan)' : 'var(--magenta)'; }
+            };
+
+            // Stato visivo ottimistico
+            setVisual(nowOn);
+            btn.style.pointerEvents = 'none';
+
+            // 1) Applica PRIMA al plugin (il plugin è la fonte di verità). Con retry.
+            const keys = key === '__semafori__'
+                ? ['if2_feature_dot_db','if2_feature_dot_crm','if2_feature_dot_amelia']
+                : [key];
+            let applied = true;
+            for (const k of keys) {
+                if (!(await setPluginConfig(url, apiKey, k, value))) { applied = false; break; }
+            }
+
+            if (!applied) {
+                // Comando NON arrivato al sito → ripristina, avvisa, NON tocca Supabase (niente disallineamento)
+                setVisual(!nowOn);
+                btn.dataset.value = value;
+                btn.style.pointerEvents = '';
+                if2Modal('⚠ Impostazione NON applicata: il sito non ha risposto (forse offline).\nRiprova quando è online.');
+                return;
+            }
+
+            // 2) Plugin confermato → allinea Supabase (così lo stato mostrato è sempre quello vero)
+            try {
+                if (key === '__semafori__') {
+                    await _SBq.from('mon_sites').update({ feature_dot_db: nowOn, feature_dot_crm: nowOn, feature_dot_amelia: nowOn }).eq('site_id', sid);
+                } else {
+                    const sbKey = {if2_feature_stats:'feature_stats',if2_feature_crm_tab:'feature_crm_tab',if2_feature_settings_tab:'feature_settings_tab',if2_feature_date_chiuse:'feature_date_chiuse',if2_feature_minimum_stay:'feature_minimum_stay'}[key];
+                    if (sbKey) await _SBq.from('mon_sites').update({ [sbKey]: nowOn }).eq('site_id', sid);
+                }
+            } catch (e) { /* il plugin è già a posto: Supabase è solo lo specchio */ }
+
+            btn.dataset.value = nowOn ? 0 : 1;
+            btn.style.pointerEvents = '';
+        });
+    });
+
+    // Filtri "Form e richieste"
+    document.querySelectorAll('#req-period .chart-toggle-btn').forEach(b => b.addEventListener('click', () => {
+        document.querySelectorAll('#req-period .chart-toggle-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active'); renderReq();
+    }));
+    document.getElementById('req-form').addEventListener('change', renderReq);
+    document.getElementById('req-channel').addEventListener('change', renderReq);
+    renderReq();
+
+    const dailySubs = Object.entries(dailyCounts).map(([date,count])=>({date,count}));
+    if (dailySubs.length > 0) buildLineChart('chart-submissions','sub-toggle',[{color:'#d82d6b',data:dailySubs,fill:true}],7);
+}
+
+// Popup in stile in3pida (sostituisce if2Modal() nativo)
+function if2Modal(message, title = 'Avviso') {
+    const old = document.getElementById('if2-modal-overlay');
+    if (old) old.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'if2-modal-overlay';
+    overlay.className = 'if2-modal-overlay';
+    overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div><button class="if2-modal-ok">Ok</button></div></div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.if2-modal-ok').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc); } });
+}
+
+// Conferma in stile in3pida (sostituisce confirm() nativo). Ritorna Promise<boolean>.
+// listItems: array opzionale (es. nomi siti) reso come lista scrollabile — regge 4 o 200 voci.
+function if2Confirm(message, title = 'Conferma', listItems = null) {
+    return new Promise(resolve => {
+        const old = document.getElementById('if2-modal-overlay');
+        if (old) old.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'if2-modal-overlay';
+        overlay.className = 'if2-modal-overlay';
+        const listHtml = (listItems && listItems.length)
+            ? `<div class="if2-modal-list">${listItems.map(n => `<div class="if2-modal-list-item">${esc(String(n))}</div>`).join('')}</div>`
+            : '';
+        overlay.innerHTML = `<div class="if2-modal-card"><div class="if2-modal-header">${esc(title)}</div><div class="if2-modal-body"><div class="if2-modal-msg">${esc(String(message)).replace(/\n/g,'<br>')}</div>${listHtml}<div class="if2-modal-actions"><button class="if2-modal-cancel">Annulla</button><button class="if2-modal-ok">Ok</button></div></div></div>`;
+        document.body.appendChild(overlay);
+        const done = (val) => { overlay.remove(); resolve(val); };
+        overlay.querySelector('.if2-modal-ok').addEventListener('click', () => done(true));
+        overlay.querySelector('.if2-modal-cancel').addEventListener('click', () => done(false));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(false); });
+    });
+}
+
+// ─── UPDATE PLUGIN ────────────────────────────────────────────────────────────
+// zipBlob: Blob scaricato nel browser — se presente lo invia direttamente (zero richieste a GitHub).
+// silent: true durante "Aggiorna tutti" — niente modal, errori solo sul bottone.
+// Ritorna 'needs_url' se il sito non supporta il blob e serve il download_url.
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob, silent) {
+    const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
+    if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
+    btn.textContent = 'Aggiornamento...';
+    btn.disabled = true;
+
+    // Versione attesa ricavata dall'URL (es. .../in3pida-form-2.2.372.zip → "2.2.372")
+    const vMatch = (downloadUrl || '').match(/(\d+\.\d+\.\d+)\.zip/);
+    const expectedVer = vMatch ? vMatch[1] : null;
+
+    const doFetch = async (body) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 150000);
+        try {
+            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
+            clearTimeout(t);
+            return r;
+        } catch(e) { clearTimeout(t); throw e; }
+    };
+
+    const showErr = (msg) => {
+        btn.textContent = 'Errore — riprova';
+        btn.style.background = 'var(--red, #ef4444)';
+        btn.style.color = 'white';
+        if (!silent) if2Modal(msg);
+        setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
+    };
+
+    // Dopo un AbortError (timeout 150s) il server WordPress può aver completato l'installazione
+    // ma la risposta è tornata DOPO che il browser ha chiuso la connessione.
+    // Verifica pingando il sito per max 30s: se riporta la versione aggiornata → successo.
+    const recoverAfterAbort = async () => {
+        btn.textContent = 'Verifica...';
+        for (let i = 0; i < 3; i++) {
+            await new Promise(r => setTimeout(r, 10000));
+            try {
+                const p = await pingLive(siteUrl, apiKey);
+                if (p.reachable && expectedVer && p.plugin_version === expectedVer) {
+                    recentlyUpdated.add(siteId);
+                    btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
+                    if (onSuccess) setTimeout(onSuccess, 2000);
+                    return 'ok';
+                }
+                if (p.reachable) break; // risponde ma versione ancora vecchia
+            } catch {}
+        }
+        return null;
+    };
+
+    try {
+        // Tentativo 1: blob upload (siti ≥2.2.362, non tocca GitHub).
+        if (zipBlob) {
+            const fd = new FormData();
+            fd.append('api_key', apiKey);
+            fd.append('plugin_zip', zipBlob, 'plugin.zip');
+            let r1;
+            try {
+                r1 = await doFetch(fd);
+            } catch(e) {
+                if (e.name === 'AbortError') {
+                    const rec = await recoverAfterAbort();
+                    if (rec === 'ok') return 'ok';
+                }
+                throw e;
+            }
+            let j1 = {}; try { j1 = await r1.json(); } catch {}
+            if (r1.ok && j1.success) {
+                recentlyUpdated.add(siteId);
+                btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                return 'ok';
+            }
+            // Sito vecchio: non sa gestire plugin_zip, serve download_url.
+            if (r1.status === 400 && (j1.error || '').includes('download_url')) return 'needs_url';
+        }
+
+        // Tentativo 2: download_url (siti vecchi). Retry automatico su 429.
+        let attempts = 0;
+        while (attempts < 5) {
+            attempts++;
+            const body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
+            let resp;
+            try { resp = await doFetch(body); }
+            catch(e) {
+                if (e.name === 'AbortError') {
+                    const rec = await recoverAfterAbort();
+                    if (rec === 'ok') return 'ok';
+                }
+                showErr('Impossibile contattare il sito:\n' + e.message); return 'error';
+            }
+            let json = {}; try { json = await resp.json(); } catch {}
+            if (resp.ok && json.success) {
+                recentlyUpdated.add(siteId);
+                btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                return 'ok';
+            }
+            if (resp.status === 429) {
+                btn.textContent = `Riprova ${attempts}/5...`;
+                await new Promise(res => setTimeout(res, 10000 * attempts)); // backoff: 10s, 20s, 30s...
+                continue;
+            }
+            let msg = resp.status === 404 || json.code === 'rest_no_route'
+                ? 'Plugin disattivato o troppo vecchio su questo sito.\nAggiornalo manualmente da WordPress.'
+                : 'Errore aggiornamento: ' + (json.error || json.message || 'Risposta non valida');
+            showErr(msg); return 'error';
+        }
+        showErr('Troppi tentativi falliti (429). Riprova tra qualche minuto.'); return 'error';
+    } catch (e) {
+        showErr('Impossibile contattare il sito:\n' + e.message); return 'error';
+    }
+}
+
+// ─── PING LIVE ────────────────────────────────────────────────────────────────
+async function pingLive(siteUrl, apiKey) {
+    const now = new Date();
+    if (!siteUrl) throw new Error('URL mancante');
+    const base = siteUrl.replace(/\/$/, '');
+    const endpoint = base + '/wp-json/if2/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const resp = await fetch(endpoint, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!resp.ok) return { reachable: false, status: resp.status, checked_at: now.toISOString() };
+        const json = await resp.json();
+        return { reachable: true, plugin_version: json.plugin_version, wp_version: json.wp_version, php_version: json.php_version, checked_at: now.toISOString() };
+    } catch(e) {
+        clearTimeout(timeout);
+        throw e;
+    }
+}
+
+function showPingResult(name, d) {
+    document.getElementById('ping-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'ping-modal'; modal.className = 'ping-overlay';
+    let body = '';
+    if (!d) {
+        body = `<div style="padding:20px;color:var(--grey)">Sito non raggiungibile o timeout.</div>`;
+    } else if (!d.reachable) {
+        body = `<div class="ping-row">${dot('red')}<span>Sito non risponde</span><span style="margin-left:auto;font-size:12px;color:var(--grey)">HTTP ${d.status||'—'}</span></div><div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    } else {
+        body = `
+        <div class="ping-row" style="border-bottom:1px solid #f4f4f8;padding-bottom:12px;margin-bottom:12px">
+            ${dot('green')}<span style="font-weight:700">Plugin attivo e raggiungibile</span>
+        </div>
+        <div class="ping-row"><span style="color:var(--grey)">Versione plugin</span><span style="margin-left:auto;font-weight:700">${esc(d.plugin_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">WordPress</span><span style="margin-left:auto;font-weight:700">${esc(d.wp_version||'—')}</span></div>
+        <div class="ping-row"><span style="color:var(--grey)">PHP</span><span style="margin-left:auto;font-weight:700">${esc(d.php_version||'—')}</span></div>
+        <div style="font-size:11px;color:#bbb;padding-top:12px;text-align:right">Verificato adesso</div>`;
+    }
+    modal.innerHTML = `<div class="ping-card"><div class="ping-header"><span class="ping-title">${esc(name)}</span><button class="ping-close" id="ping-close">✕</button></div><div class="ping-body">${body}</div></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('ping-close').addEventListener('click', ()=>modal.remove());
+    modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
+}
+
+// ─── GRAFICO LINEE ────────────────────────────────────────────────────────────
+function buildLineChart(canvasId, toggleId, series, defaultRange, unit='') {
+    let chart = null;
+    function build(range) {
+        const labels = series[0].data.slice(-range).map(r => new Date(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));
+        const datasets = series.map(s => ({ label:s.label||'', data:s.data.slice(-range).map(r=>r.count), borderColor:s.color, borderWidth:2.5, pointBackgroundColor:s.color, pointRadius:3, pointHoverRadius:6, fill:s.fill||false, backgroundColor:s.fill?(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,s.color+'28');g.addColorStop(1,s.color+'00');return g;}:'transparent', tension:0.4, spanGaps:true }));
+        if (chart) chart.destroy();
+        chart = new Chart(document.getElementById(canvasId),{ type:'line', data:{labels,datasets}, options:{ plugins:{legend:{display:series.length>1,labels:{font:{family:'Montserrat',size:11},boxWidth:12}},tooltip:{callbacks:{label:ctx=>` ${ctx.parsed.y}${unit}`}}}, scales:{x:{grid:{display:false},ticks:{font:{family:'Montserrat',size:10},maxTicksLimit:10,color:'#999'}},y:{beginAtZero:true,ticks:{font:{family:'Montserrat',size:11},color:'#999',callback:v=>v+unit},grid:{color:'#f4f4f8'}}}}});
+    }
+    build(defaultRange);
+    document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(btn => { btn.addEventListener('click', () => { document.querySelectorAll(`#${toggleId} .chart-toggle-btn`).forEach(b=>b.classList.remove('active')); btn.classList.add('active'); build(parseInt(btn.dataset.range)); }); });
+}
+
+function logRowHtml(log) {
+    return `<div class="log-item"><span class="log-level ${esc(log.level)}">${esc(log.level)}</span><span class="log-message">${esc(log.message)}</span><span class="log-time">${timeAgo(log.created_at)}</span></div>`;
+}
+
+// ─── UI HELPERS ───────────────────────────────────────────────────────────────
+function showView(view) { ['plugins','sites','site','errors','users'].forEach(v => document.getElementById(`view-${v}`).style.display = v===view?'':'none'); }
+function setHero(label, title, stats) {
+    document.getElementById('hero-label').textContent = label;
+    document.getElementById('hero-title').textContent = title;
+    const el = document.getElementById('sw-stats');
+    if (stats&&stats.length>0) {
+        el.style.display='';
+        const colors=['var(--magenta)','var(--cyan)','var(--dark)'];
+        el.innerHTML=stats.map((s,i)=>{const bg=s.color||colors[i%colors.length];const icon=s.icon!==undefined?s.icon:s.num;const display=s.display!==undefined?s.display:s.num;return`<div class="sw-stat-card" data-i="${i}" style="${s.onclick?'cursor:pointer;':''}"><div class="sw-stat-icon" style="background:${bg}">${icon}</div><div class="sw-stat-text"><div class="sw-stat-num">${display}</div><div class="sw-stat-label">${s.label}</div></div></div>`;}).join('');
+        stats.forEach((s,i)=>{ if(s.onclick){ const card=el.querySelector(`[data-i="${i}"]`); if(card) card.addEventListener('click', s.onclick); } });
+    } else el.style.display='none';
+}
+function setBreadcrumb(items) {
+    const el = document.getElementById('breadcrumb');
+    el.innerHTML = items.map((item,i) => { const sep = i>0?'<span class="breadcrumb-sep">›</span>':''; const cls = item.active?'breadcrumb-item active':'breadcrumb-item'; return `${sep}<span class="${cls}" data-i="${i}">${esc(item.label)}</span>`; }).join('');
+    items.forEach((item,i) => { if (item.onclick) { const n=el.querySelector(`[data-i="${i}"]`); if(n) n.addEventListener('click',item.onclick); } });
+}
+function infoRow(label, value, small=false) { return `<div class="info-row"><div class="info-label">${esc(label)}</div><div class="info-value"${small?' style="font-size:11px;color:var(--grey)"':''}>${esc(value||'—')}</div></div>`; }
+function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
+function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
+
+function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
+function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''} ${esc(status)}"${title?` title="${esc(title)}"`:''} style="cursor:default"></span>`; }
+function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
+function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
+function fmtDate(dateStr) { if(!dateStr)return'—'; return new Date(dateStr).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); }
+// Decodifica le entità HTML (es. nomi sito salvati come "Golf&amp;Beach" da WordPress)
+const _if2DecEl = typeof document !== 'undefined' ? document.createElement('textarea') : null;
+function decodeEntities(s) { if(s===null||s===undefined)return''; if(!_if2DecEl)return String(s); _if2DecEl.innerHTML = String(s); return _if2DecEl.value; }
+function esc(str) { if(str===null||str===undefined)return''; str = decodeEntities(String(str)); return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function loadingHtml() { return '<div class="loading"><div class="spinner"></div> Caricamento...</div>'; }
+function errorHtml()   { return '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Errore nel caricamento</div></div>'; }
+function emptyHtml(title, sub) { return `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`; }
+
+// ─── VISTA UTENTI (admin only) ────────────────────────────────────────────────
+let _usersCache = [];
+
+async function loadUsers() {
+    if (currentProfile?.role !== 'admin') return;
+    currentView = 'users'; showView('users'); setActiveNav('nav-users');
+    setBreadcrumb([{label:'Utenti', active:true}]);
+    setHero('Utenti', 'Gestione accessi');
+
+    const el = document.getElementById('users-container');
+    el.innerHTML = loadingHtml();
+
+    const { data: users, error } = await _SB.from('mon_profiles').select('*').order('created_at', {ascending:false});
+    if (error || !users) { el.innerHTML = errorHtml(); return; }
+    _usersCache = users;
+    renderUsers(users);
+}
+
+function renderUsers(users) {
+    const el = document.getElementById('users-container');
+    el.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">${users.length} account registrati</span>
+                <input type="text" id="user-search" class="search-input" placeholder="🔍 Cerca utente...">
+            </div>
+            <table class="sites-table">
+                <thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Registrato</th><th>Azioni</th></tr></thead>
+                <tbody>${users.map(userRowHtml).join('')}</tbody>
+            </table>
+        </div>`;
+
+    document.getElementById('user-search').addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('#users-container tbody tr').forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+
+    document.querySelectorAll('.btn-edit-user').forEach(btn => {
+        btn.addEventListener('click', () => openEditUser(btn.dataset.id));
+    });
+    document.querySelectorAll('.btn-delete-user').forEach(btn => {
+        btn.addEventListener('click', () => deleteUser(btn.dataset.id, btn.dataset.name));
+    });
+}
+
+function userRowHtml(u) {
+    const initials = (u.full_name || u.email || '?').charAt(0).toUpperCase();
+    const isSelf   = u.id === currentProfile?.id;
+    const roleCls  = u.role === 'admin' ? 'role-badge-admin' : 'role-badge-user';
+    const roleLabel = u.role === 'admin' ? 'Admin' : 'User';
+    return `<tr>
+        <td>
+            <div style="display:flex;align-items:center;gap:10px">
+                ${u.avatar_url
+                    ? `<img src="${esc(u.avatar_url)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+                    : `<div class="user-initial">${initials}</div>`}
+                <strong>${esc(u.full_name||'—')}</strong>${isSelf?'<span class="user-self-tag">tu</span>':''}
+            </div>
+        </td>
+        <td style="font-size:13px;color:var(--grey)">${esc(u.email)}</td>
+        <td><span class="role-badge ${roleCls}">${roleLabel}</span></td>
+        <td style="font-size:12px;color:var(--grey)">${fmtDate(u.created_at)}</td>
+        <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-ping btn-edit-user" data-id="${esc(u.id)}">✏ Modifica</button>
+            ${!isSelf?`<button class="btn-delete-user" data-id="${esc(u.id)}" data-name="${esc(u.full_name||u.email)}" style="background:none;border:none;color:var(--red-text);font-size:13px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:8px;transition:background .15s" onmouseover="this.style.background='var(--red-bg)'" onmouseout="this.style.background='none'">🗑 Elimina</button>`:''}
+        </td>
+    </tr>`;
+}
+
+function openEditUser(id) {
+    const u = _usersCache.find(x => x.id === id);
+    if (!u) return;
+    document.getElementById('edit-user-id').value     = u.id;
+    document.getElementById('edit-user-name').value   = u.full_name || '';
+    document.getElementById('edit-user-role').value   = u.role;
+    document.getElementById('edit-user-error').style.display = 'none';
+    document.getElementById('edit-user-overlay').style.display = 'flex';
+
+    const saveBtn = document.getElementById('btn-save-user');
+    saveBtn.onclick = async () => {
+        const name = document.getElementById('edit-user-name').value.trim();
+        const role = document.getElementById('edit-user-role').value;
+        saveBtn.textContent = '...'; saveBtn.disabled = true;
+        const { error } = await _SB.from('mon_profiles').update({ full_name: name, role }).eq('id', u.id);
+        saveBtn.textContent = 'Salva'; saveBtn.disabled = false;
+        if (error) {
+            const errEl = document.getElementById('edit-user-error');
+            errEl.textContent = error.message; errEl.style.display = 'block';
+        } else {
+            document.getElementById('edit-user-overlay').style.display = 'none';
+            loadUsers();
+        }
+    };
+
+    document.getElementById('edit-user-close').onclick = () => {
+        document.getElementById('edit-user-overlay').style.display = 'none';
+    };
+    document.getElementById('edit-user-overlay').onclick = e => {
+        if (e.target === document.getElementById('edit-user-overlay'))
+            document.getElementById('edit-user-overlay').style.display = 'none';
+    };
+}
+
+async function deleteUser(id, name) {
+    if (!(await if2Confirm(`Eliminare l'utente "${name}"?\n\nL'accesso al monitoring verrà revocato.`))) return;
+    const { error } = await _SB.from('mon_profiles').delete().eq('id', id);
+    if (error) { if2Modal('Errore: ' + error.message); return; }
+    loadUsers();
+}
