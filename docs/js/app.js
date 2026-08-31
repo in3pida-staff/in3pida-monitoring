@@ -620,7 +620,7 @@ async function loadSites(pluginName, silent = false) {
             const setProgress = () => { btnUpdateAll.textContent = `Aggiornamento ${done + failed}/${total}...`; };
             setProgress();
 
-            const CONCURRENCY = 5;
+            const CONCURRENCY = 1; // sequenziale: identico a premere "Aggiorna" uno alla volta
             const needsUrlBtns = [];
             let idx = 0;
             const workers = Array.from({ length: Math.min(CONCURRENCY, outdatedBtns.length) }, async () => {
