@@ -555,7 +555,7 @@ async function loadSites(pluginName, silent = false) {
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return !recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Tipo CRM</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>
@@ -600,7 +600,7 @@ async function loadSites(pluginName, silent = false) {
     if (btnUpdateAll) {
         btnUpdateAll.addEventListener('click', async () => {
             const outdatedBtns = [...el.querySelectorAll('.btn-update-row[data-outdated="1"]')];
-            if (!outdatedBtns.length) return;
+            if (!outdatedBtns.length) { if2Modal('✓ Tutti i siti sono già aggiornati.'); return; }
             const names = outdatedBtns.map(b => b.dataset.name || b.dataset.url || b.dataset.site);
             if (!(await if2Confirm(`Aggiornare ${outdatedBtns.length} siti all'ultima versione?`, 'Aggiorna plugin', names))) return;
             btnUpdateAll.textContent = 'Download ZIP...';
