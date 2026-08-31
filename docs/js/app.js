@@ -555,7 +555,7 @@ async function loadSites(pluginName, silent = false) {
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
             <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
-            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
+            <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Tipo CRM</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>
         `;
@@ -646,7 +646,9 @@ async function loadSites(pluginName, silent = false) {
                 if2Modal('✓ Ultima versione già installata.');
                 return;
             }
-            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn);
+            let zipBlob = null;
+            if (btn.dataset.dl) { try { const r = await fetch(btn.dataset.dl); if (r.ok) zipBlob = await r.blob(); } catch {} }
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, false, zipBlob);
         });
     });
     el.querySelectorAll('.btn-ping').forEach(btn => {
@@ -685,6 +687,7 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap;font-weight:700;text-align:center">${s.total_requests||0}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
+        <td style="font-size:12px;white-space:nowrap">${(()=>{const t=s.crm_type||'';if(!t)return '<span style="color:var(--grey)">—</span>';const map={hoteldoor:'HotelDoor',mrpreno:'MrPreno',combo:'Combo',override:'Override',hotel_id:'Hotel ID'};return t.split(',').map(k=>map[k]||k).join(', ');})()}</td>
         <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');if(s.feature_date_chiuse===false||s.feature_date_chiuse===0)off.push('Date chiuse');if(s.feature_minimum_stay===false||s.feature_minimum_stay===0)off.push('Min stay');if(s.feature_dot_db===false||s.feature_dot_db===0||s.feature_dot_crm===false||s.feature_dot_crm===0||s.feature_dot_amelia===false||s.feature_dot_amelia===0)off.push('Semafori');const TOT=6;if(!off.length)return '<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';if(off.length===TOT)return '<span style="color:var(--magenta);font-weight:700">Tutte OFF</span>';return '<span style="color:var(--magenta);font-weight:700">OFF: '+off.join(', ')+'</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
@@ -772,8 +775,7 @@ async function loadSiteDetail(siteId, silent = false) {
             .map(s => (integ==='crm' && s.status==='error' && !s.error_message) ? {...s,status:'skipped'} : s);
         const configured = !!site['has_' + integ];
         if (!stats.length) {
-            // CRM configurato ma senza invii tracciati (gestito esternamente) → verde
-            integrationStatus[integ]={status:(integ==='crm'&&configured)?'green':'grey',ok:0,total:0,rate:null,last_error:null,configured};
+            integrationStatus[integ]={status:'grey',ok:0,total:0,rate:null,last_error:null,configured};
             return;
         }
         const ok = stats.filter(s => integ==='amelia' ? s.status==='ok' : (s.status==='ok'||s.status==='info'||s.status==='skipped')).length;
@@ -941,7 +943,12 @@ async function loadSiteDetail(siteId, silent = false) {
 
     const btnDoUpdate = document.getElementById('btn-do-update');
     if (btnDoUpdate) {
-        btnDoUpdate.addEventListener('click', () => updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate));
+        btnDoUpdate.addEventListener('click', async () => {
+            let zipBlob = null;
+            const dlUrl = li ? li.download_url : null;
+            if (dlUrl) { try { const r = await fetch(dlUrl); if (r.ok) zipBlob = await r.blob(); } catch {} }
+            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, false, zipBlob);
+        });
     }
 
     el.querySelectorAll('.btn-enable-crm').forEach(btn => {
