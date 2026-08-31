@@ -614,7 +614,7 @@ async function loadSites(pluginName, silent = false) {
 
             // 2. Prova TUTTI i siti in parallelo con il blob (siti ≥2.2.362 lo gestiscono,
             //    zero richieste a GitHub). I siti vecchi tornano needsUrl=true.
-            let done = 0;
+            let done = 0, failed = 0;
             const total = outdatedBtns.length;
             const setProgress = () => { btnUpdateAll.textContent = `Aggiornamento ${done}/${total}...`; };
             setProgress();
@@ -623,17 +623,18 @@ async function loadSites(pluginName, silent = false) {
             await Promise.all(outdatedBtns.map(async btn => {
                 const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.dl, btn, () => {}, true, zipBlob, true);
                 if (result === 'needs_url') needsUrlBtns.push(btn);
-                else { done++; setProgress(); }
+                else { if (result === 'error') failed++; else done++; setProgress(); }
             }));
 
             // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta, 3s di pausa tra uno e l'altro.
             for (const btn of needsUrlBtns) {
-                await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
-                done++; setProgress();
-                if (done < total) await new Promise(r => setTimeout(r, 3000));
+                const r = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
+                if (r === 'error') failed++; else done++;
+                setProgress();
+                if (done + failed < total) await new Promise(r => setTimeout(r, 3000));
             }
 
-            btnUpdateAll.textContent = 'Tutti aggiornati!';
+            btnUpdateAll.textContent = failed ? `✓ ${done} aggiornati · ${failed} non raggiungibili` : `✓ ${done} aggiornati!`;
             btnUpdateAll.disabled = false;
             setTimeout(() => loadSites(currentPlugin), 3000);
         });
