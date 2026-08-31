@@ -1085,10 +1085,6 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
     btn.textContent = 'Aggiornamento...';
     btn.disabled = true;
 
-    // Versione attesa ricavata dall'URL (es. .../in3pida-form-2.2.372.zip → "2.2.372")
-    const vMatch = (downloadUrl || '').match(/(\d+\.\d+\.\d+)\.zip/);
-    const expectedVer = vMatch ? vMatch[1] : null;
-
     const doFetch = async (body) => {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 150000);
@@ -1107,43 +1103,13 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
     };
 
-    // Dopo un AbortError (timeout 150s) il server WordPress può aver completato l'installazione
-    // ma la risposta è tornata DOPO che il browser ha chiuso la connessione.
-    // Verifica pingando il sito per max 30s: se riporta la versione aggiornata → successo.
-    const recoverAfterAbort = async () => {
-        btn.textContent = 'Verifica...';
-        for (let i = 0; i < 3; i++) {
-            await new Promise(r => setTimeout(r, 10000));
-            try {
-                const p = await pingLive(siteUrl, apiKey);
-                if (p.reachable && expectedVer && p.plugin_version === expectedVer) {
-                    recentlyUpdated.add(siteId);
-                    btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
-                    if (onSuccess) setTimeout(onSuccess, 2000);
-                    return 'ok';
-                }
-                if (p.reachable) break; // risponde ma versione ancora vecchia
-            } catch {}
-        }
-        return null;
-    };
-
     try {
         // Tentativo 1: blob upload (siti ≥2.2.362, non tocca GitHub).
         if (zipBlob) {
             const fd = new FormData();
             fd.append('api_key', apiKey);
             fd.append('plugin_zip', zipBlob, 'plugin.zip');
-            let r1;
-            try {
-                r1 = await doFetch(fd);
-            } catch(e) {
-                if (e.name === 'AbortError') {
-                    const rec = await recoverAfterAbort();
-                    if (rec === 'ok') return 'ok';
-                }
-                throw e;
-            }
+            const r1 = await doFetch(fd);
             let j1 = {}; try { j1 = await r1.json(); } catch {}
             if (r1.ok && j1.success) {
                 recentlyUpdated.add(siteId);
@@ -1160,15 +1126,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         while (attempts < 5) {
             attempts++;
             const body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
-            let resp;
-            try { resp = await doFetch(body); }
-            catch(e) {
-                if (e.name === 'AbortError') {
-                    const rec = await recoverAfterAbort();
-                    if (rec === 'ok') return 'ok';
-                }
-                showErr('Impossibile contattare il sito:\n' + e.message); return 'error';
-            }
+            let resp; try { resp = await doFetch(body); } catch(e) { showErr('Impossibile contattare il sito:\n' + e.message); return 'error'; }
             let json = {}; try { json = await resp.json(); } catch {}
             if (resp.ok && json.success) {
                 recentlyUpdated.add(siteId);
