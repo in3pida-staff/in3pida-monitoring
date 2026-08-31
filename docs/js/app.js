@@ -1092,7 +1092,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
 
     const doFetch = async (body) => {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 90000);
+        const t = setTimeout(() => ctrl.abort(), 150000);
         try {
             const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
             clearTimeout(t);
