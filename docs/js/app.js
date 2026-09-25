@@ -178,15 +178,22 @@ function semverGt(a, b) {
     }
     return false;
 }
+// Come si chiama il file zip di ogni plugin dentro docs/releases/.
+const ZIP_BASE = { 'in3pida-form-2': 'in3pida-form', 'in3pida-immagini': 'in3pida-immagini' };
+// Quale namespace REST espone ogni plugin sul sito WordPress.
+const REST_NS  = { 'in3pida-form-2': 'if2',          'in3pida-immagini': 'in3img' };
+function restNs(pluginName) { return REST_NS[pluginName] || 'if2'; }
+
 function latestInfo(pluginName) {
     const v = latestVersions[pluginName];
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
-    const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip`;
-    const cdn_url = `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip`;
-    const urls = { 'in3pida-form-2': cdn_url };
-    return { version, date, download_url: urls[pluginName] || '', raw_url };
+    const base    = ZIP_BASE[pluginName];
+    if (!base) return { version, date, download_url: '', raw_url: '' };
+    const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/${base}-${version}.zip`;
+    const cdn_url = `https://monitoring.in3pida.it/releases/${base}-${version}.zip`;
+    return { version, date, download_url: cdn_url, raw_url };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -627,7 +634,7 @@ async function loadSites(pluginName, silent = false) {
                 while (idx < outdatedBtns.length) {
                     const btn = outdatedBtns[idx++];
                     const zipBlob = zipArray ? new Blob([zipArray]) : null;
-                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true);
+                    const result = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, zipBlob, true, btn.dataset.plugin);
                     if (result === 'needs_url') needsUrlBtns.push(btn);
                     else { if (result === 'error') failed++; else done++; setProgress(); }
                 }
@@ -636,7 +643,7 @@ async function loadSites(pluginName, silent = false) {
 
             // 3. Siti vecchi (non supportano blob): aggiorna uno alla volta, 3s di pausa.
             for (const btn of needsUrlBtns) {
-                const r = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true);
+                const r = await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, () => {}, true, null, true, btn.dataset.plugin);
                 if (r === 'error') failed++; else done++;
                 setProgress();
                 if (done + failed < total) await new Promise(r => setTimeout(r, 3000));
@@ -664,7 +671,7 @@ async function loadSites(pluginName, silent = false) {
             for (const url of [btn.dataset.dl, btn.dataset.rawdl].filter(Boolean)) {
                 try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
             }
-            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, true, zipBlob);
+            await updatePlugin(btn.dataset.site, btn.dataset.url, btn.dataset.apikey, btn.dataset.rawdl || btn.dataset.dl, btn, null, true, zipBlob, false, btn.dataset.plugin);
         });
     });
     el.querySelectorAll('.btn-ping').forEach(btn => {
@@ -674,7 +681,7 @@ async function loadSites(pluginName, silent = false) {
             const siteUrl = btn.dataset.url;
             const apiKey  = btn.dataset.apikey;
             btn.textContent = '...'; btn.disabled = true;
-            try { const d = await pingLive(siteUrl, apiKey); showPingResult(name, d); }
+            try { const d = await pingLive(siteUrl, apiKey, btn.dataset.plugin); showPingResult(name, d); }
             catch { showPingResult(name, null); }
             finally { btn.textContent = 'Testa ora'; btn.disabled = false; }
         });
@@ -708,8 +715,8 @@ function siteRowHtml(s) {
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
         <td style="white-space:nowrap"><div class="row-actions">
-            <button class="btn-ping" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
-            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=!recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
+            <button class="btn-ping" data-plugin="${esc(s.plugin_name||'')}" data-site="${esc(s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-name="${esc(s.site_name||s.site_id)}">Testa ora</button>
+            ${(()=>{const lr=latestInfo(s.plugin_name);const outdated=!recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);return `<button class="btn-update btn-update-row" data-plugin="${esc(s.plugin_name||'')}" data-site="${esc(s.site_id)}" data-name="${esc(s.site_name||s.site_url||s.site_id)}" data-url="${esc(s.site_url||'')}" data-apikey="${esc(s.api_key||'')}" data-dl="${esc(lr?lr.download_url:'')}" data-rawdl="${esc(lr?lr.raw_url:'')}" data-outdated="${outdated?'1':'0'}">${outdated?'Aggiorna':'✓ Aggiornato'}</button>`;})()}
         </div></td>
     </tr>`;
 }
@@ -967,7 +974,7 @@ async function loadSiteDetail(siteId, silent = false) {
             for (const url of [li ? li.download_url : null, li ? li.raw_url : null].filter(Boolean)) {
                 try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
             }
-            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, true, zipBlob);
+            updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, true, zipBlob, false, site.plugin_name);
         });
     }
 
@@ -1092,7 +1099,7 @@ function if2Confirm(message, title = 'Conferma', listItems = null) {
 // zipBlob: Blob scaricato nel browser — se presente lo invia direttamente (zero richieste a GitHub).
 // silent: true durante "Aggiorna tutti" — niente modal, errori solo sul bottone.
 // Ritorna 'needs_url' se il sito non supporta il blob e serve il download_url.
-async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob, silent) {
+async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob, silent, pluginName) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
     if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
     btn.textContent = 'Aggiornamento...';
@@ -1106,7 +1113,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 150000);
         try {
-            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
+            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/' + restNs(pluginName) + '/v1/update', { method: 'POST', body, signal: ctrl.signal });
             clearTimeout(t);
             return r;
         } catch(e) { clearTimeout(t); throw e; }
@@ -1128,7 +1135,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         for (let i = 0; i < 3; i++) {
             await new Promise(r => setTimeout(r, 10000));
             try {
-                const p = await pingLive(siteUrl, apiKey);
+                const p = await pingLive(siteUrl, apiKey, pluginName);
                 if (p.reachable && expectedVer && p.plugin_version === expectedVer) {
                     recentlyUpdated.add(siteId);
                     btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
@@ -1161,7 +1168,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             if (r1.ok && j1.success) {
                 recentlyUpdated.add(siteId);
                 btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
-                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey, pluginName); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
                 return 'ok';
             }
             // Sito vecchio: non sa gestire plugin_zip, serve download_url.
@@ -1186,7 +1193,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             if (resp.ok && json.success) {
                 recentlyUpdated.add(siteId);
                 btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
-                setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
+                setTimeout(async () => { try { await pingLive(siteUrl, apiKey, pluginName); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
                 return 'ok';
             }
             if (resp.status === 429) {
@@ -1206,11 +1213,11 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
 }
 
 // ─── PING LIVE ────────────────────────────────────────────────────────────────
-async function pingLive(siteUrl, apiKey) {
+async function pingLive(siteUrl, apiKey, pluginName) {
     const now = new Date();
     if (!siteUrl) throw new Error('URL mancante');
     const base = siteUrl.replace(/\/$/, '');
-    const endpoint = base + '/wp-json/if2/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
+    const endpoint = base + '/wp-json/' + restNs(pluginName) + '/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
@@ -1289,7 +1296,7 @@ function infoRow(label, value, small=false) { return `<div class="info-row"><div
 function rateLabel(integ) { if (!integ||integ.total===0) return '—'; return integ.rate+'%'; }
 function statCardClass(integ) { if (!integ||integ.total===0||integ.status==='grey') return ''; return integ.status==='green' ? 'cyan' : 'magenta'; }
 
-function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
+function displayName(name) { return {'in3pida-form-2':'in3pida Form 2.0','in3pida-immagini':'in3pida Immagini','smart-working':'Smart Working','llm-positioning':'Plugin LLM'}[name]||name; }
 function dot(status, lg=false, title='') { return `<span class="dot${lg?' lg':''} ${esc(status)}"${title?` title="${esc(title)}"`:''} style="cursor:default"></span>`; }
 function statusLabel(s) { return {green:'Tutto OK',yellow:'Attenzione',red:'Errore',grey:'N/D'}[s]||s; }
 function timeAgo(dateStr) { if(!dateStr)return'—'; const mins=Math.round((Date.now()-new Date(dateStr))/60000); if(mins<2)return'adesso'; if(mins<60)return`${mins} min fa`; if(mins<1440)return`${Math.round(mins/60)} ore fa`; return`${Math.round(mins/1440)} giorni fa`; }
