@@ -160,15 +160,10 @@ async function loadLatest() {
         if (r.ok) latestVersions = await r.json();
     } catch {}
 }
-function updateLatestVersions(sites) {
-    (sites || []).forEach(s => {
-        if (!s.plugin_version) return;
-        const cur = latestVersions[s.plugin_name];
-        const curVer = cur ? (typeof cur === 'object' ? cur.version : cur) : null;
-        if (!curVer || semverGt(s.plugin_version, curVer)) {
-            latestVersions[s.plugin_name] = { version: s.plugin_version, date: null };
-        }
-    });
+function updateLatestVersions(_sites) {
+    // NON aggiornare latestVersions con le versioni dichiarate dai siti:
+    // la versione "ultima" viene solo da latest.json (controllato da noi).
+    // Un sito malevolo che dichiara "999.0.0" non deve diventare la versione di riferimento.
 }
 function semverGt(a, b) {
     const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -683,14 +678,14 @@ async function loadSites(pluginName, silent = false) {
 function siteRowHtml(s) {
     const integ = s.last_integ || {};
     const configured = { supabase: s.has_supabase, crm: s.has_crm, amelia: s.has_amelia };
-    const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${st}"></span>`; };
+    const dotFor = key => { const st = integ[key]; const conf = configured[key]; if (!conf) return `<span class="integ-dot grey" title="${key}: non configurato"></span>`; if (st===undefined||st===null) return `<span class="integ-dot dot-ok" title="${key}: configurato"></span>`; if (st==='ok'||st==='info'||st==='skipped') return `<span class="integ-dot dot-ok" title="${key}: ok"></span>`; if (st==='error') return `<span class="integ-dot dot-error" title="${key}: errore"></span>`; return `<span class="integ-dot dot-pending" title="${key}: ${esc(String(st))}"></span>`; };
     return `<tr data-site-id="${esc(s.site_id)}" data-status="${esc(s.status)}">
         <td>${dot(s.overallStatus, false, s.overallTooltip)}</td>
         <td><div class="site-name-cell">${esc(s.site_name||s.site_url||s.site_id)}</div><div class="site-url-cell">${esc(s.site_url||'')}</div></td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${s.last_request?timeAgo(s.last_request):'—'}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap;font-weight:700;text-align:center">${s.total_requests||0}</td>
         <td><div class="integ-dots-row"><span class="integ-dots-label">Database</span>${dotFor('supabase')}<span class="integ-dots-label">CRM</span>${dotFor('crm')}<span class="integ-dots-label">Amelia</span>${dotFor('amelia')}</div></td>
-        <td style="font-size:12px;white-space:nowrap">${(()=>{const t=s.crm_type||'';if(!t)return '<span style="color:var(--grey)">—</span>';const map={hoteldoor:'HotelDoor',mrpreno:'MrPreno',combo:'Combo',override:'Override',hotel_id:'Hotel ID'};return t.split(',').map(k=>map[k]||k).join(', ');})()}</td>
+        <td style="font-size:12px;white-space:nowrap">${(()=>{const t=s.crm_type||'';if(!t)return '<span style="color:var(--grey)">—</span>';const map={hoteldoor:'HotelDoor',mrpreno:'MrPreno',combo:'Combo',override:'Override',hotel_id:'Hotel ID'};return t.split(',').map(k=>esc(map[k]||k)).join(', ');})()}</td>
         <td style="font-size:12px">${(()=>{const off=[];if(s.feature_stats===false||s.feature_stats===0)off.push('Statistiche');if(s.feature_crm_tab===false||s.feature_crm_tab===0)off.push('CRM');if(s.feature_settings_tab===false||s.feature_settings_tab===0)off.push('Impostazioni');if(s.feature_date_chiuse===false||s.feature_date_chiuse===0)off.push('Date chiuse');if(s.feature_minimum_stay===false||s.feature_minimum_stay===0)off.push('Min stay');if(s.feature_dot_db===false||s.feature_dot_db===0||s.feature_dot_crm===false||s.feature_dot_crm===0||s.feature_dot_amelia===false||s.feature_dot_amelia===0)off.push('Semafori');const TOT=6;if(!off.length)return '<span style="color:var(--cyan);font-weight:700">✓ Tutte attive</span>';if(off.length===TOT)return '<span style="color:var(--magenta);font-weight:700">Tutte OFF</span>';return '<span style="color:var(--magenta);font-weight:700">OFF: '+off.join(', ')+'</span>';})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${esc(s.plugin_version||'—')}${(()=>{const lr=latestInfo(s.plugin_name);return lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version)?`<span class="version-badge warn" style="margin-left:6px;font-size:10px;padding:2px 6px">old</span>`:''})()}</td>
         <td style="font-size:12px;color:var(--grey);white-space:nowrap">${fmtDate(s.first_seen)}</td>
@@ -895,7 +890,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="card-header"><span class="card-title">Stato semafori</span></div>
                 <div class="semaforo-general">${dot(overallStatus,true)}<span>Stato generale: <strong>${statusLabel(overallStatus)}</strong></span></div>
                 <div class="semaforo-row">${dot(heartbeatStatus)}<span class="semaforo-label">Plugin attivo sul sito</span><span class="semaforo-detail">Ultimo segnale: ${timeAgo(site.last_heartbeat)}</span></div>
-                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+v.last_error:''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
+                ${Object.entries(integrationStatus).map(([k,v])=>`<div class="semaforo-row">${dot(v.status)}<span class="semaforo-label">${integLabels[k]||k}</span><span class="semaforo-detail">${v.total>0?`${v.ok}/${v.total} ok (${v.rate}%)${v.last_error?' — '+esc(v.last_error):''}` : v.configured ? (k==='crm'?'Attivo — gestito esternamente':'Configurata — nessun invio nelle ultime 24h') : 'Non configurata su questo sito'}</span></div>`).join('')}
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Informazioni sito</span></div>
