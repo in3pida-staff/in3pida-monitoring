@@ -183,11 +183,12 @@ function latestInfo(pluginName) {
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
+    const sha256  = typeof v === 'object' ? (v.sha256 || '') : '';
     const base    = ZIP_BASE[pluginName];
-    if (!base) return { version, date, download_url: '', raw_url: '' };
+    if (!base) return { version, date, sha256, download_url: '', raw_url: '' };
     const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/${base}-${version}.zip`;
     const cdn_url = `https://monitoring.in3pida.it/releases/${base}-${version}.zip`;
-    return { version, date, download_url: cdn_url, raw_url };
+    return { version, date, sha256, download_url: cdn_url, raw_url };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -917,6 +918,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="info-grid">
                     ${infoRow('Sito',site.site_name)}${infoRow('URL',site.site_url)}${infoRow('Plugin ver.',site.plugin_version)}${infoRow('WordPress',site.wp_version)}${infoRow('PHP',site.php_version)}${infoRow('Tema attivo',site.theme_active)}${infoRow('Installato il',fmtDate(site.first_seen))}${infoRow('Site ID',site.site_id,true)}
                 </div>
+                ${pluginName==='in3pida-form-2'&&site.api_key?`<div style="padding:12px 26px 16px;border-top:1px solid #f4f4f8;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button class="btn-update" id="btn-bi-backfill" style="background:#7c3aed;border-color:#7c3aed">Recupera storico BI</button><span id="bi-backfill-result" style="font-size:12px;color:var(--grey)"></span></div>`:''}
             </div>
         </div>
         ${formsReqCard}
@@ -969,6 +971,31 @@ async function loadSiteDetail(siteId, silent = false) {
                 try { const r = await fetch(url); if (r.ok) { zipBlob = await r.blob(); break; } } catch {}
             }
             updatePlugin(siteId, site.site_url, site.api_key, latestDownloadUrl, btnDoUpdate, null, true, zipBlob, false, site.plugin_name);
+        });
+    }
+
+    const btnBiBackfill = document.getElementById('btn-bi-backfill');
+    if (btnBiBackfill) {
+        btnBiBackfill.addEventListener('click', async () => {
+            const resultEl = document.getElementById('bi-backfill-result');
+            btnBiBackfill.textContent = 'Recupero in corso...'; btnBiBackfill.disabled = true;
+            resultEl.textContent = '';
+            try {
+                const ctrl = new AbortController();
+                const t = setTimeout(() => ctrl.abort(), 300000);
+                const r = await fetch(site.site_url.replace(/\/$/, '').replace(/^http:\/\//i, 'https://') + '/wp-json/if2/v1/bi-identity-backfill', {
+                    method: 'POST',
+                    headers: { 'X-IF2-Api-Key': site.api_key, 'Content-Type': 'application/json' },
+                    signal: ctrl.signal,
+                });
+                clearTimeout(t);
+                const j = await r.json();
+                resultEl.textContent = JSON.stringify(j);
+            } catch(e) {
+                resultEl.textContent = 'Errore: ' + e.message;
+            } finally {
+                btnBiBackfill.textContent = 'Recupera storico BI'; btnBiBackfill.disabled = false;
+            }
         });
     }
 
@@ -1107,7 +1134,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 150000);
         try {
-            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/' + restNs(pluginName) + '/v1/update', { method: 'POST', body, signal: ctrl.signal });
+            const r = await fetch(siteUrl.replace(/\/$/, '').replace(/^http:\/\//i, 'https://') + '/wp-json/' + restNs(pluginName) + '/v1/update', { method: 'POST', body, signal: ctrl.signal });
             clearTimeout(t);
             return r;
         } catch(e) { clearTimeout(t); throw e; }
@@ -1142,11 +1169,14 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         return null;
     };
 
+    const li_sha = latestInfo(pluginName || 'in3pida-form-2');
+    const sha256 = li_sha ? li_sha.sha256 : '';
     try {
         // Tentativo 1: blob upload (siti ≥2.2.362, non tocca GitHub).
         if (zipBlob) {
             const fd = new FormData();
             fd.append('api_key', apiKey);
+            if (sha256) fd.append('sha256', sha256);
             fd.append('plugin_zip', zipBlob, 'plugin.zip');
             let r1;
             try {
@@ -1173,7 +1203,9 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         let attempts = 0;
         while (attempts < 5) {
             attempts++;
-            const body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
+            const params = { api_key: apiKey, download_url: downloadUrl };
+            if (sha256) params.sha256 = sha256;
+            const body = new URLSearchParams(params);
             let resp;
             try { resp = await doFetch(body); }
             catch(e) {
