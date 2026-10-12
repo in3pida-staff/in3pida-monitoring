@@ -918,7 +918,7 @@ async function loadSiteDetail(siteId, silent = false) {
                 <div class="info-grid">
                     ${infoRow('Sito',site.site_name)}${infoRow('URL',site.site_url)}${infoRow('Plugin ver.',site.plugin_version)}${infoRow('WordPress',site.wp_version)}${infoRow('PHP',site.php_version)}${infoRow('Tema attivo',site.theme_active)}${infoRow('Installato il',fmtDate(site.first_seen))}${infoRow('Site ID',site.site_id,true)}
                 </div>
-                ${pluginName==='in3pida-form-2'&&site.api_key?`<div style="padding:12px 26px 16px;border-top:1px solid #f4f4f8;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button class="btn-update" id="btn-bi-backfill" style="background:#7c3aed;border-color:#7c3aed">Recupera storico BI</button><span id="bi-backfill-result" style="font-size:12px;color:var(--grey)"></span></div>`:''}
+                <div style="padding:12px 26px 16px;border-top:1px solid #f4f4f8;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button class="btn-update" id="btn-bi-backfill" style="background:#7c3aed;border-color:#7c3aed">Recupera storico BI</button><span id="bi-backfill-result" style="font-size:12px;color:var(--grey)"></span></div>
             </div>
         </div>
         ${formsReqCard}
