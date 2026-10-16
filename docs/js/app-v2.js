@@ -178,10 +178,11 @@ function latestInfo(pluginName) {
     if (!v) return null;
     const version = typeof v === 'object' ? v.version : v;
     const date    = typeof v === 'object' ? v.date    : null;
+    const sha256  = typeof v === 'object' ? (v.sha256 || '') : '';
     const raw_url = `https://raw.githubusercontent.com/in3pida-staff/in3pida-monitoring/main/docs/releases/in3pida-form-${version}.zip`;
     const cdn_url = `https://monitoring.in3pida.it/releases/in3pida-form-${version}.zip`;
     const urls = { 'in3pida-form-2': cdn_url };
-    return { version, date, download_url: urls[pluginName] || '', raw_url };
+    return { version, date, sha256, download_url: urls[pluginName] || '', raw_url };
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
@@ -550,7 +551,7 @@ async function loadSites(pluginName, silent = false) {
     el.innerHTML = `
         <button class="btn-back" id="back-to-plugins">← Torna ai plugin</button>
         <div class="card">
-            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return !recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
+            <div class="card-header"><span class="card-title">Installazioni — ${esc(displayName(pluginName))}</span><div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--grey)">${enriched.length} siti</span>${pluginName==='in3pida-form-2'?`<button class="btn-update" id="btn-retry-supabase-all" style="background:#1a73e8;border-color:#1a73e8">&#8635; Rinvia DB falliti</button><span id="retry-last-result" style="font-size:11px;color:#666;white-space:nowrap">${(()=>{try{const r=JSON.parse(localStorage.getItem('if2_retry_result')||'null');return r?`Ultimo rinvio: ✓ ${r.ok} ✗ ${r.fail} — ${r.ts}`:''}catch(e){return ''}})()}</span><button class="btn-update" id="btn-check-email" style="background:#d97706;border-color:#d97706">&#9993; Verifica email</button>`:''} ${enriched.some(s=>{const lr=latestInfo(s.plugin_name);return !recentlyUpdated.has(s.site_id)&&lr&&s.plugin_version&&semverGt(lr.version,s.plugin_version);})?`<button class="btn-update" id="btn-update-all">Aggiorna tutti</button>`:''}</div></div>
             <div class="sites-scroll"><table class="sites-table"><thead><tr><th>Stato</th><th>Sito</th>${_th('Ultima richiesta','last_request')}${_th('Tot. richieste','total_requests')}<th>Database / CRM / Amelia</th><th>Tipo CRM</th><th>Funzionalità</th><th>Ver.</th>${_th('Installato il','first_seen')}<th>Azioni</th></tr></thead>
             <tbody>${enriched.map(siteRowHtml).join('')}</tbody></table></div>
         </div>
@@ -588,6 +589,30 @@ async function loadSites(pluginName, silent = false) {
             if (span) span.textContent = `Ultimo rinvio: ✓ ${totalOk} ✗ ${totalFail} — ${ts}`;
             const msg = `✓ OK: ${totalOk}   ✗ Fail: ${totalFail}` + (errors.length ? '\n\n' + errors.join('\n') : '');
             if2Modal(msg);
+        });
+    }
+
+    const btnCheckEmail = document.getElementById('btn-check-email');
+    if (btnCheckEmail) {
+        btnCheckEmail.addEventListener('click', async () => {
+            const targets = enriched.filter(s => s.site_url && s.api_key);
+            if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
+            btnCheckEmail.textContent = 'In corso...'; btnCheckEmail.disabled = true;
+            const rows = [];
+            await Promise.all(targets.map(async s => {
+                try {
+                    const url = s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/email-config?api_key=' + encodeURIComponent(s.api_key);
+                    const resp = await fetch(url);
+                    const json = await resp.json();
+                    if (Array.isArray(json)) {
+                        json.forEach(f => {
+                            if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
+                        });
+                    }
+                } catch(e) { rows.push((s.site_name||s.site_url) + ': errore connessione'); }
+            }));
+            btnCheckEmail.textContent = '✉ Verifica email'; btnCheckEmail.disabled = false;
+            if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
         });
     }
 
@@ -1098,11 +1123,14 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         setTimeout(() => { btn.textContent = 'Aggiorna ora'; btn.disabled = false; btn.style.background = ''; btn.style.color = ''; }, 4000);
     };
 
+    const li = latestInfo('in3pida-form-2');
+    const sha256 = li ? li.sha256 : '';
     try {
         // Tentativo 1: blob upload (siti ≥2.2.362, non tocca GitHub).
         if (zipBlob) {
             const fd = new FormData();
             fd.append('api_key', apiKey);
+            if (sha256) fd.append('sha256', sha256);
             fd.append('plugin_zip', zipBlob, 'plugin.zip');
             const r1 = await doFetch(fd);
             let j1 = {}; try { j1 = await r1.json(); } catch {}
@@ -1120,7 +1148,9 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         let attempts = 0;
         while (attempts < 5) {
             attempts++;
-            const body = new URLSearchParams({ api_key: apiKey, download_url: downloadUrl });
+            const params = { api_key: apiKey, download_url: downloadUrl };
+            if (sha256) params.sha256 = sha256;
+            const body = new URLSearchParams(params);
             let resp; try { resp = await doFetch(body); } catch(e) { showErr('Impossibile contattare il sito:\n' + e.message); return 'error'; }
             let json = {}; try { json = await resp.json(); } catch {}
             if (resp.ok && json.success) {
