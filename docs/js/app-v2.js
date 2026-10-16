@@ -14,6 +14,7 @@ let currentSite    = null;
 let latestVersions = {};
 const recentlyUpdated = new Set(); // site_id aggiornati in questa sessione → non tornare "old" prima del heartbeat
 let currentProfile = null;
+let _checkEmailTargets = [];
 
 // ─── HELPERS GLOBALI (usati in loadSites e loadSiteDetail) ────────────────────
 const normalizeRecord = s => {
@@ -96,6 +97,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     dropdown.addEventListener('click', e => e.stopPropagation());
 
     document.getElementById('dd-logout').addEventListener('click', async () => { localStorage.removeItem('if2_gate'); try { await _SB.auth.signOut(); } catch(e){} window.location.href = 'login.html'; });
+
+    document.addEventListener('click', async e => {
+        if (!e.target || e.target.id !== 'btn-check-email') return;
+        const btn = e.target;
+        const targets = _checkEmailTargets;
+        if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
+        btn.textContent = 'In corso...'; btn.disabled = true;
+        const rows = [];
+        await Promise.all(targets.map(async s => {
+            try {
+                const url = s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/email-config?api_key=' + encodeURIComponent(s.api_key);
+                const resp = await fetch(url);
+                const json = await resp.json();
+                const forms = Array.isArray(json) ? json : (Array.isArray(json.forms) ? json.forms : []);
+                forms.forEach(f => {
+                    if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
+                });
+            } catch(e2) { rows.push((s.site_name||s.site_url) + ': errore connessione'); }
+        }));
+        btn.textContent = '✉ Verifica email'; btn.disabled = false;
+        if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
+    });
     document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
     const infoOverlay = document.getElementById('info-overlay');
@@ -558,6 +581,8 @@ async function loadSites(pluginName, silent = false) {
         `;
 
 
+    if (pluginName === 'in3pida-form-2') _checkEmailTargets = enriched.filter(s => s.site_url && s.api_key);
+
     document.getElementById('back-to-plugins').addEventListener('click', loadPlugins);
 
     const btnRetryAll = document.getElementById('btn-retry-supabase-all');
@@ -589,29 +614,6 @@ async function loadSites(pluginName, silent = false) {
             if (span) span.textContent = `Ultimo rinvio: ✓ ${totalOk} ✗ ${totalFail} — ${ts}`;
             const msg = `✓ OK: ${totalOk}   ✗ Fail: ${totalFail}` + (errors.length ? '\n\n' + errors.join('\n') : '');
             if2Modal(msg);
-        });
-    }
-
-    const btnCheckEmail = document.getElementById('btn-check-email');
-    if (btnCheckEmail) {
-        btnCheckEmail.addEventListener('click', async () => {
-            const targets = enriched.filter(s => s.site_url && s.api_key);
-            if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
-            btnCheckEmail.textContent = 'In corso...'; btnCheckEmail.disabled = true;
-            const rows = [];
-            await Promise.all(targets.map(async s => {
-                try {
-                    const url = s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/email-config?api_key=' + encodeURIComponent(s.api_key);
-                    const resp = await fetch(url);
-                    const json = await resp.json();
-                    const forms = Array.isArray(json) ? json : (Array.isArray(json.forms) ? json.forms : []);
-                    forms.forEach(f => {
-                        if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
-                    });
-                } catch(e) { rows.push((s.site_name||s.site_url) + ': errore connessione'); }
-            }));
-            btnCheckEmail.textContent = '✉ Verifica email'; btnCheckEmail.disabled = false;
-            if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
         });
     }
 
