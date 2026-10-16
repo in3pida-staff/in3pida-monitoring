@@ -604,11 +604,10 @@ async function loadSites(pluginName, silent = false) {
                     const url = s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/email-config?api_key=' + encodeURIComponent(s.api_key);
                     const resp = await fetch(url);
                     const json = await resp.json();
-                    if (Array.isArray(json)) {
-                        json.forEach(f => {
-                            if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
-                        });
-                    }
+                    const forms = Array.isArray(json) ? json : (Array.isArray(json.forms) ? json.forms : []);
+                    forms.forEach(f => {
+                        if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
+                    });
                 } catch(e) { rows.push((s.site_name||s.site_url) + ': errore connessione'); }
             }));
             btnCheckEmail.textContent = '✉ Verifica email'; btnCheckEmail.disabled = false;
