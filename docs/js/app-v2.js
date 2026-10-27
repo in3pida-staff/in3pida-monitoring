@@ -118,7 +118,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             } catch (e2) { pending.push(name); }
         }));
-        if (pending.length) rows.push('', 'Da verificare dopo l\'aggiornamento del plugin (2.2.425):', ...pending);
+        if (!rows.length && pending.length) rows.push('Nessuno ✓');
+        if (pending.length) rows.push('', 'Siti che non hanno ancora mandato i dati (si aggiornano da soli entro un\'ora):', ...pending);
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
         if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
     });
