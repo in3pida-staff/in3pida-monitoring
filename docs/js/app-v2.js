@@ -105,17 +105,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
         btn.textContent = 'In corso...'; btn.disabled = true;
         const rows = [];
+        // Legge la config email dall'ultimo elenco form inviato dal plugin (forms_snapshot): nessuna chiamata ai siti.
+        const pending = [];
         await Promise.all(targets.map(async s => {
+            const name = s.site_name || s.site_url;
             try {
-                const url = s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/email-config?api_key=' + encodeURIComponent(s.api_key);
-                const resp = await fetch(url);
-                const json = await resp.json();
-                const forms = Array.isArray(json) ? json : (Array.isArray(json.forms) ? json.forms : []);
+                const { data } = await _SBq.from('mon_events').select('payload').eq('site_id', s.site_id).eq('event_type', 'forms_snapshot').order('created_at', { ascending: false }).limit(1);
+                const forms = (data && data[0] && data[0].payload && Array.isArray(data[0].payload.forms)) ? data[0].payload.forms : null;
+                if (!forms || !forms.length || !('method' in forms[0])) { pending.push(name); return; }
                 forms.forEach(f => {
-                    if (f.mismatch) rows.push(`${s.site_name||s.site_url} — Form #${f.form_id} "${f.form_name}": FROM=${f.email_from} (${f.method})`);
+                    if (f.mismatch) rows.push(`${name} — Form #${f.id} "${f.name}": FROM=${f.email_from} (${f.method})`);
                 });
-            } catch(e2) { rows.push((s.site_name||s.site_url) + ': errore connessione'); }
+            } catch (e2) { pending.push(name); }
         }));
+        if (pending.length) rows.push('', 'Da verificare dopo l\'aggiornamento del plugin (2.2.425):', ...pending);
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
         if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
     });
