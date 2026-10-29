@@ -112,14 +112,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const { data } = await _SBq.from('mon_events').select('payload').eq('site_id', s.site_id).eq('event_type', 'forms_snapshot').order('created_at', { ascending: false }).limit(1);
                 const forms = (data && data[0] && data[0].payload && Array.isArray(data[0].payload.forms)) ? data[0].payload.forms : null;
-                if (!forms || !forms.length || !('method' in forms[0])) { pending.push(name); return; }
+                if (!forms || !forms.length || forms[0].email_chk !== 2) { pending.push(name); return; }
                 forms.forEach(f => {
                     if (f.mismatch) rows.push(`${name} — Form #${f.id} "${f.name}": FROM=${f.email_from} (${f.method})`);
                 });
             } catch (e2) { pending.push(name); }
         }));
         if (!rows.length && pending.length) rows.push('Nessuno ✓');
-        if (pending.length) rows.push('', 'Siti che non hanno ancora mandato i dati (si aggiornano da soli entro un\'ora):', ...pending);
+        if (pending.length) rows.push('', 'Siti ancora da controllare (serve plugin 2.2.429, poi entro un\'ora):', ...pending);
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
         if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
     });
