@@ -104,8 +104,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const targets = _checkEmailTargets;
         if (!targets.length) { if2Modal('Nessun sito con API key configurata.'); return; }
         btn.textContent = 'In corso...'; btn.disabled = true;
-        const rows = [];
         // Legge la config email dall'ultimo elenco form inviato dal plugin (forms_snapshot): nessuna chiamata ai siti.
+        const groups = [];
         const pending = [];
         await Promise.all(targets.map(async s => {
             const name = s.site_name || s.site_url;
@@ -113,16 +113,48 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const { data } = await _SBq.from('mon_events').select('payload').eq('site_id', s.site_id).eq('event_type', 'forms_snapshot').order('created_at', { ascending: false }).limit(1);
                 const forms = (data && data[0] && data[0].payload && Array.isArray(data[0].payload.forms)) ? data[0].payload.forms : null;
                 if (!forms || !forms.length || forms[0].email_chk !== 2) { pending.push(name); return; }
-                forms.forEach(f => {
-                    if (f.mismatch) rows.push(`${name} — Form #${f.id} "${f.name}": FROM=${f.email_from} (${f.method})`);
-                });
+                const bad = forms.filter(f => f.mismatch);
+                if (!bad.length) return;
+                const senders = [...new Set(bad.flatMap(f => String(f.email_from || '').split(',').map(x => x.trim()).filter(Boolean)))];
+                let host = '';
+                try { host = new URL(s.site_url).hostname.replace(/^www\./, ''); } catch (e3) {}
+                groups.push({ name, host, count: bad.length, total: forms.length, senders });
             } catch (e2) { pending.push(name); }
         }));
-        if (!rows.length && pending.length) rows.push('Nessuno ✓');
-        if (pending.length) rows.push('', 'Siti ancora da controllare (serve plugin 2.2.429, poi entro un\'ora):', ...pending);
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
-        if2Modal(rows.length ? 'Form con email da sistemare:\n\n' + rows.join('\n') : '✓ Tutti i form hanno la configurazione email corretta.');
+        groups.sort((a, b) => a.name.localeCompare(b.name));
+        pending.sort();
+        showEmailReport(groups, pending);
     });
+
+    function showEmailReport(groups, pending) {
+        const old = document.getElementById('if2-modal-overlay');
+        if (old) old.remove();
+        const td = 'padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;text-align:left';
+        const th = td + ';font-weight:700;background:#fafafa;position:sticky;top:0';
+        let html = '';
+        if (!groups.length) {
+            html += '<p style="margin:0 0 12px;font-weight:600">✓ Nessun form con il mittente sbagliato.</p>';
+        } else {
+            html += `<p style="margin:0 0 10px;text-align:left">In <b>${groups.length} hotel</b> alcuni form mandano le email con un mittente di un dominio diverso dal sito: rischiano lo spam.<br>Soluzione: nel form, scheda Email, mettere un mittente del dominio del sito oppure attivare SMTP.</p>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:13px"><tr><th style="${th}">Hotel</th><th style="${th}">Sito</th><th style="${th}">Form da sistemare</th><th style="${th}">Mittente usato</th></tr>`;
+            groups.forEach(g => {
+                html += `<tr><td style="${td};font-weight:600">${esc(g.name)}</td><td style="${td}">${esc(g.host)}</td><td style="${td}">${g.count} su ${g.total}</td><td style="${td};word-break:break-all">${g.senders.map(esc).join('<br>')}</td></tr>`;
+            });
+            html += '</table>';
+        }
+        if (pending.length) {
+            html += `<p style="margin:14px 0 4px;text-align:left;color:#666"><b>Ancora da controllare</b> (${pending.length}): ${pending.map(esc).join(', ')}</p>`;
+        }
+        const overlay = document.createElement('div');
+        overlay.id = 'if2-modal-overlay';
+        overlay.className = 'if2-modal-overlay';
+        overlay.innerHTML = `<div class="if2-modal-card" style="max-width:900px;width:94vw;max-height:88vh;display:flex;flex-direction:column"><div class="if2-modal-header">Verifica email</div><div class="if2-modal-body" style="overflow:auto;flex:1">${html}</div><div style="padding:12px;text-align:center"><button class="if2-modal-ok">Ok</button></div></div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector('.if2-modal-ok').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    }
     document.getElementById('dd-profile').addEventListener('click', () => { dropdown.style.display = 'none'; openProfileModal(); });
 
     const infoOverlay = document.getElementById('info-overlay');
