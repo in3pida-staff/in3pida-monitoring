@@ -115,14 +115,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!forms || !forms.length || forms[0].email_chk !== 2) {
                     const hb = s.last_heartbeat ? new Date(s.last_heartbeat) : null;
                     const old = !hb || (Date.now() - hb.getTime()) > 3 * 3600 * 1000;
-                    pending.push(name + (old ? ` (non comunica col monitoring dal ${hb ? hb.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'})` : ' (dati in arrivo)'));
+                    let phost = '';
+                    try { phost = new URL(s.site_url).hostname.replace(/^www\./, ''); } catch (e4) {}
+                    let why;
+                    if (old) why = `sito spento o plugin tolto: ultimo contatto ${hb ? hb.toLocaleDateString('it-IT') : 'mai'}`;
+                    else if (s.plugin_version && semverGt('2.2.429', s.plugin_version)) why = `da aggiornare: ha la ${s.plugin_version}`;
+                    else why = 'dati in arrivo entro un\'ora';
+                    pending.push({ name, host: phost, why, old });
                     return;
                 }
                 const senders = [...new Set(forms.flatMap(f => String(f.email_from || '').split(',').map(x => x.trim()).filter(Boolean)))];
                 let host = '';
                 try { host = new URL(s.site_url).hostname.replace(/^www\./, ''); } catch (e3) {}
                 groups.push({ name, host, total: forms.length, senders });
-            } catch (e2) { pending.push(name); }
+            } catch (e2) { pending.push({ name, host: '', why: 'non letto, riprova', old: false }); }
         }));
         // Esito per indirizzo: stesso dominio del sito = a posto; altrimenti dipende dalla regola DMARC del dominio mittente.
         const rootOf = d => String(d || '').toLowerCase().split('.').slice(-2).join('.');
@@ -140,8 +146,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
         groups.sort((a, b) => (b.level - a.level) || a.name.localeCompare(b.name));
-        pending.sort();
-        showEmailReport(groups, pending);
+        // Registrazioni vecchie di un sito che compare già (con dati) nella tabella: non vanno controllate.
+        const seen = new Set(groups.map(g => g.host));
+        const pend = pending.filter(p => !(p.old && p.host && seen.has(p.host))).sort((a, b) => a.name.localeCompare(b.name));
+        showEmailReport(groups, pend);
     });
 
     const _dmarcCache = {};
@@ -191,7 +199,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             html += '</table>';
         }
         if (pending.length) {
-            html += `<p style="margin:14px 0 4px;text-align:left;color:#666"><b>Ancora da controllare</b> (${pending.length}): ${pending.map(esc).join(', ')}</p>`;
+            html += `<p style="margin:16px 0 6px;text-align:left;font-weight:700">Non ancora verificati (${pending.length})</p><table style="width:100%;border-collapse:collapse;font-size:13px">`;
+            pending.forEach(p => {
+                html += `<tr><td style="${td};font-weight:600">${esc(p.name)}<div style="font-weight:400;color:#888;font-size:12px">${esc(p.host)}</div></td><td style="${td};color:#b26a00;font-weight:600">${esc(p.why)}</td></tr>`;
+            });
+            html += '</table>';
         }
         const overlay = document.createElement('div');
         overlay.id = 'if2-modal-overlay';
