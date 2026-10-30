@@ -121,11 +121,43 @@ document.addEventListener('DOMContentLoaded', async () => {
                 groups.push({ name, host, count: bad.length, total: forms.length, senders });
             } catch (e2) { pending.push(name); }
         }));
+        // Esito per indirizzo: dipende dalla regola DMARC del dominio mittente (letta dal DNS pubblico).
+        const allSenders = [...new Set(groups.flatMap(g => g.senders))];
+        const verdicts = {};
+        await Promise.all(allSenders.map(async addr => { verdicts[addr] = await senderVerdict(addr); }));
+        groups.forEach(g => {
+            g.items = g.senders.map(a => ({ addr: a, v: verdicts[a] }));
+            g.items.sort((a, b) => b.v.level - a.v.level);
+            g.level = Math.max(...g.items.map(i => i.v.level));
+        });
         btn.textContent = '✉ Verifica email'; btn.disabled = false;
-        groups.sort((a, b) => a.name.localeCompare(b.name));
+        groups.sort((a, b) => (b.level - a.level) || a.name.localeCompare(b.name));
         pending.sort();
         showEmailReport(groups, pending);
     });
+
+    const _dmarcCache = {};
+    async function senderVerdict(addr) {
+        const domain = String(addr.split('@')[1] || '').toLowerCase();
+        const FREE = ['gmail.com','googlemail.com','libero.it','hotmail.com','hotmail.it','outlook.com','outlook.it','live.com','live.it','yahoo.com','yahoo.it','icloud.com','virgilio.it','tiscali.it','alice.it','tim.it','aruba.it','pec.it'];
+        if (FREE.includes(domain)) return { level: 2, text: 'Da sistemare: email personale (gmail/libero…), finisce in spam o viene rifiutata' };
+        if (!(domain in _dmarcCache)) {
+            _dmarcCache[domain] = (async () => {
+                try {
+                    const r = await fetch('https://dns.google/resolve?name=_dmarc.' + encodeURIComponent(domain) + '&type=TXT');
+                    const j = await r.json();
+                    const txt = (j.Answer || []).map(a => String(a.data || '').replace(/"/g, '')).find(t => /v=DMARC1/i.test(t)) || '';
+                    const m = txt.match(/(?:^|;)\s*p\s*=\s*(\w+)/i);
+                    return m ? m[1].toLowerCase() : 'none';
+                } catch (e) { return 'unknown'; }
+            })();
+        }
+        const p = await _dmarcCache[domain];
+        if (p === 'reject')     return { level: 2, text: 'Da sistemare subito: le email vengono rifiutate' };
+        if (p === 'quarantine') return { level: 2, text: 'Da sistemare: le email finiscono in spam' };
+        if (p === 'unknown')    return { level: 1, text: 'Non verificabile ora, riprova' };
+        return { level: 0, text: 'A posto: le email arrivano' };
+    }
 
     function showEmailReport(groups, pending) {
         const old = document.getElementById('if2-modal-overlay');
@@ -133,13 +165,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         const td = 'padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;text-align:left';
         const th = td + ';font-weight:700;background:#fafafa;position:sticky;top:0';
         let html = '';
+        const toFix = groups.filter(g => g.level >= 1).length;
         if (!groups.length) {
-            html += '<p style="margin:0 0 12px;font-weight:600">✓ Nessun form con il mittente sbagliato.</p>';
+            html += '<p style="margin:0 0 12px;font-weight:600">✓ Nessun form con il mittente da controllare.</p>';
         } else {
-            html += `<p style="margin:0 0 10px;text-align:left">In <b>${groups.length} hotel</b> alcuni form mandano le email con un mittente di un dominio diverso dal sito: rischiano lo spam.<br>Soluzione: nel form, scheda Email, mettere un mittente del dominio del sito oppure attivare SMTP.</p>`;
-            html += `<table style="width:100%;border-collapse:collapse;font-size:13px"><tr><th style="${th}">Hotel</th><th style="${th}">Sito</th><th style="${th}">Form da sistemare</th><th style="${th}">Mittente usato</th></tr>`;
+            html += `<p style="margin:0 0 10px;text-align:left"><b>${toFix ? toFix + ' hotel da sistemare' : 'Nessun hotel da sistemare ✓'}</b> — gli altri sono a posto così.<br>Per sistemare: nel form, scheda <b>EMAIL</b> → "Metodo di invio" = <b>SMTP personalizzato</b> con i dati della casella del mittente.</p>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:13px"><tr><th style="${th}">Hotel</th><th style="${th}">Form</th><th style="${th}">Mittente</th><th style="${th}">Esito</th></tr>`;
+            const col = l => l >= 2 ? '#c0264b' : (l === 1 ? '#b26a00' : '#1a7f4b');
             groups.forEach(g => {
-                html += `<tr><td style="${td};font-weight:600">${esc(g.name)}</td><td style="${td}">${esc(g.host)}</td><td style="${td}">${g.count} su ${g.total}</td><td style="${td};word-break:break-all">${g.senders.map(esc).join('<br>')}</td></tr>`;
+                const n = g.items.length;
+                g.items.forEach((it, i) => {
+                    html += '<tr>';
+                    if (i === 0) html += `<td rowspan="${n}" style="${td};font-weight:600">${esc(g.name)}<div style="font-weight:400;color:#888;font-size:12px">${esc(g.host)}</div></td><td rowspan="${n}" style="${td}">${g.count} su ${g.total}</td>`;
+                    html += `<td style="${td};word-break:break-all">${esc(it.addr)}</td><td style="${td};color:${col(it.v.level)};font-weight:600">${esc(it.v.text)}</td></tr>`;
+                });
             });
             html += '</table>';
         }
