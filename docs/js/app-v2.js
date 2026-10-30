@@ -112,21 +112,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const { data } = await _SBq.from('mon_events').select('payload').eq('site_id', s.site_id).eq('event_type', 'forms_snapshot').order('created_at', { ascending: false }).limit(1);
                 const forms = (data && data[0] && data[0].payload && Array.isArray(data[0].payload.forms)) ? data[0].payload.forms : null;
-                if (!forms || !forms.length || forms[0].email_chk !== 2) { pending.push(name); return; }
-                const bad = forms.filter(f => f.mismatch);
-                if (!bad.length) return;
-                const senders = [...new Set(bad.flatMap(f => String(f.email_from || '').split(',').map(x => x.trim()).filter(Boolean)))];
+                if (!forms || !forms.length || forms[0].email_chk !== 2) {
+                    const hb = s.last_heartbeat ? new Date(s.last_heartbeat) : null;
+                    const old = !hb || (Date.now() - hb.getTime()) > 3 * 3600 * 1000;
+                    pending.push(name + (old ? ` (non comunica col monitoring dal ${hb ? hb.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'})` : ' (dati in arrivo)'));
+                    return;
+                }
+                const senders = [...new Set(forms.flatMap(f => String(f.email_from || '').split(',').map(x => x.trim()).filter(Boolean)))];
                 let host = '';
                 try { host = new URL(s.site_url).hostname.replace(/^www\./, ''); } catch (e3) {}
-                groups.push({ name, host, count: bad.length, total: forms.length, senders });
+                groups.push({ name, host, total: forms.length, senders });
             } catch (e2) { pending.push(name); }
         }));
-        // Esito per indirizzo: dipende dalla regola DMARC del dominio mittente (letta dal DNS pubblico).
+        // Esito per indirizzo: stesso dominio del sito = a posto; altrimenti dipende dalla regola DMARC del dominio mittente.
+        const rootOf = d => String(d || '').toLowerCase().split('.').slice(-2).join('.');
         const allSenders = [...new Set(groups.flatMap(g => g.senders))];
         const verdicts = {};
         await Promise.all(allSenders.map(async addr => { verdicts[addr] = await senderVerdict(addr); }));
         groups.forEach(g => {
-            g.items = g.senders.map(a => ({ addr: a, v: verdicts[a] }));
+            g.items = g.senders.map(a => ({
+                addr: a,
+                v: rootOf(a.split('@')[1]) === rootOf(g.host) ? { level: 0, text: 'A posto: stesso dominio del sito' } : verdicts[a],
+            }));
+            if (!g.items.length) g.items = [{ addr: 'mittente predefinito del sito', v: { level: 0, text: 'A posto' } }];
             g.items.sort((a, b) => b.v.level - a.v.level);
             g.level = Math.max(...g.items.map(i => i.v.level));
         });
@@ -163,7 +171,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const old = document.getElementById('if2-modal-overlay');
         if (old) old.remove();
         const td = 'padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;text-align:left';
-        const th = td + ';font-weight:700;background:#fafafa;position:sticky;top:0';
+        const th = td + ';font-weight:700;background:#fafafa';
         let html = '';
         const toFix = groups.filter(g => g.level >= 1).length;
         if (!groups.length) {
@@ -176,7 +184,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const n = g.items.length;
                 g.items.forEach((it, i) => {
                     html += '<tr>';
-                    if (i === 0) html += `<td rowspan="${n}" style="${td};font-weight:600">${esc(g.name)}<div style="font-weight:400;color:#888;font-size:12px">${esc(g.host)}</div></td><td rowspan="${n}" style="${td}">${g.count} su ${g.total}</td>`;
+                    if (i === 0) html += `<td rowspan="${n}" style="${td};font-weight:600">${esc(g.name)}<div style="font-weight:400;color:#888;font-size:12px">${esc(g.host)}</div></td><td rowspan="${n}" style="${td}">${g.total}</td>`;
                     html += `<td style="${td};word-break:break-all">${esc(it.addr)}</td><td style="${td};color:${col(it.v.level)};font-weight:600">${esc(it.v.text)}</td></tr>`;
                 });
             });
