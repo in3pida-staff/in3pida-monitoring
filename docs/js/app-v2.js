@@ -695,7 +695,7 @@ async function loadSites(pluginName, silent = false) {
                     fd.append('api_key', s.api_key);
                     fd.append('days', '7');
                     fd.append('force', '1');
-                    const resp = await fetch(s.site_url.replace(/\/$/, '') + '/wp-json/if2/v1/retry-supabase', { method: 'POST', body: fd });
+                    const resp = await fetch(siteBase(s.site_url) + '/wp-json/if2/v1/retry-supabase', { method: 'POST', body: fd });
                     const json = await resp.json();
                     totalOk   += json.ok   || 0;
                     totalFail += json.fail || 0;
@@ -822,7 +822,7 @@ function siteRowHtml(s) {
 // Ritorna true solo se il plugin conferma {success:true}.
 async function setPluginConfig(url, apiKey, key, value) {
     if (!url || !apiKey) return false;
-    const endpoint = url.replace(/\/$/, '') + '/wp-json/if2/v1/set-config';
+    const endpoint = siteBase(url) + '/wp-json/if2/v1/set-config';
     const body = new URLSearchParams({ api_key: apiKey, key: key, value: String(value) });
     for (let i = 0; i < 2; i++) {
         try {
@@ -1195,6 +1195,14 @@ function if2Confirm(message, title = 'Conferma', listItems = null) {
 // zipBlob: Blob scaricato nel browser — se presente lo invia direttamente (zero richieste a GitHub).
 // silent: true durante "Aggiorna tutti" — niente modal, errori solo sul bottone.
 // Ritorna 'needs_url' se il sito non supporta il blob e serve il download_url.
+// Indirizzo del sito per le chiamate dal monitoring (che è in https): un sito registrato
+// come http:// verrebbe bloccato dal browser ("Failed to fetch"), quindi si usa https.
+function siteBase(u) {
+    u = String(u || '').replace(/\/$/, '');
+    if (location.protocol === 'https:' && /^http:\/\//i.test(u) && !/^http:\/\/(localhost|127\.)/i.test(u)) u = 'https://' + u.slice(7);
+    return u;
+}
+
 async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess, skipConfirm, zipBlob, silent) {
     const siteLabel = (btn && btn.dataset && btn.dataset.name) || siteUrl;
     if (!skipConfirm && !(await if2Confirm('Aggiornare il plugin su «' + siteLabel + '»?\n\nIl sito resterà attivo durante l\'operazione.', 'Aggiorna plugin'))) return;
@@ -1205,7 +1213,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 150000);
         try {
-            const r = await fetch(siteUrl.replace(/\/$/, '') + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
+            const r = await fetch(siteBase(siteUrl) + '/wp-json/if2/v1/update', { method: 'POST', body, signal: ctrl.signal });
             clearTimeout(t);
             return r;
         } catch(e) { clearTimeout(t); throw e; }
@@ -1277,7 +1285,7 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
 async function pingLive(siteUrl, apiKey) {
     const now = new Date();
     if (!siteUrl) throw new Error('URL mancante');
-    const base = siteUrl.replace(/\/$/, '');
+    const base = siteBase(siteUrl);
     const endpoint = base + '/wp-json/if2/v1/status' + (apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
