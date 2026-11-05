@@ -1228,16 +1228,18 @@ async function updatePlugin(siteId, siteUrl, apiKey, downloadUrl, btn, onSuccess
             fd.append('api_key', apiKey);
             if (sha256) fd.append('sha256', sha256);
             fd.append('plugin_zip', zipBlob, 'plugin.zip');
-            const r1 = await doFetch(fd);
-            let j1 = {}; try { j1 = await r1.json(); } catch {}
-            if (r1.ok && j1.success) {
+            // Se il server del sito blocca l'upload (firewall, limite dimensione) il browser dà
+            // "Failed to fetch": non fermarsi, si passa al download_url qui sotto.
+            let r1 = null; try { r1 = await doFetch(fd); } catch {}
+            let j1 = {}; if (r1) { try { j1 = await r1.json(); } catch {} }
+            if (r1 && r1.ok && j1.success) {
                 recentlyUpdated.add(siteId);
                 btn.textContent = 'Aggiornato!'; btn.style.background = 'var(--cyan)'; btn.style.color = 'white';
                 setTimeout(async () => { try { await pingLive(siteUrl, apiKey); } catch {} setTimeout(() => onSuccess ? onSuccess() : loadSiteDetail(siteId), 3000); }, 2000);
                 return 'ok';
             }
             // Sito vecchio: non sa gestire plugin_zip, serve download_url.
-            if (r1.status === 400 && (j1.error || '').includes('download_url')) return 'needs_url';
+            if (r1 && r1.status === 400 && (j1.error || '').includes('download_url')) return 'needs_url';
         }
 
         // Tentativo 2: download_url (siti vecchi). Retry automatico su 429.
